@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Laya 商店截图与视频生成器 · 1920×1080 所见即所得工作台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Noto+Sans+TC:wght@400;500;600;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- 顶部全局工具栏（100% 简体中文界面） -->
+  <header class="topbar">
+    <div class="brand-group">
+      <div class="brand-logo">Laya</div>
+      <div>
+        <span class="brand-title">Laya 商店截图生成器</span>
+        <span class="brand-sub">自动保存进度 · 全元素可移可删 · 1920×1080</span>
+      </div>
+      <span id="exportModeBadge" class="export-mode-badge">🖼️ 横屏海报模式（1920×1080）</span>
+    </div>
+
+    <div class="topbar-actions">
+      <button type="button" id="btnTogglePosterLang" class="btn-purple-outline" title="一键切换画布内所有文字的简体/繁体（编辑栏保持简体）">
+        🌐 画布：简体 ⇄ 繁体
+      </button>
+      <button type="button" id="btnToggleTransTop" class="btn-purple-outline" title="一键切换透明背景（无黑色底）">
+        🏁 一键透明背景
+      </button>
+      <select class="ctrl-select" data-bind="layout.canvasTheme" style="width:auto;padding:7px 10px;font-size:12px;">
+        <option value="dark">🌙 深色紫黑底</option>
+        <option value="transparent">🏁 透明外背景（无黑底 PNG）</option>
+        <option value="full-transparent">✨ 全透明无黑框（连卡片底板透明）</option>
+        <option value="light">☀️ 浅色白底</option>
+      </select>
+      <button type="button" id="btnRandomStatusTop" class="btn-dark">🎲 随机状态栏</button>
+      <button type="button" id="btnAiCopyTop" class="btn-purple-outline">✨ AI 生成文案</button>
+      <button type="button" id="btnExportPNG" class="btn-purple-outline">📸 导出截图</button>
+      <button type="button" id="btnExportMP4" class="btn-primary">🎬 导出 MP4</button>
+      <button type="button" id="btnResetDefault" class="btn-dark">↺ 重置默认</button>
+    </div>
+  </header>
+
+  <!-- 主工作区 -->
+  <main class="workspace">
+    <!-- 左侧：16:9 横屏预览与自由拖动舞台 -->
+    <section class="stage-column">
+      <div class="stage-subbar">
+        <div class="stage-tool-group">
+          <span>拖动模式：</span>
+          <select id="selDragScope" class="ctrl-select" style="width:auto;padding:4px 8px;font-size:12px;">
+            <option value="element">自由移动/点击编辑任意元素</option>
+            <option value="module">整体移动/隐藏四大模块</option>
+          </select>
+
+          <label class="chk-pill" style="padding:4px 8px;">
+            <input type="checkbox" id="chkSnapGuides" checked />
+            <span>虚线对齐线</span>
+          </label>
+
+          <label class="chk-pill" style="padding:4px 8px;">
+            <input type="checkbox" data-bind="layout.enableAnim" checked />
+            <span>✨ 动态光效</span>
+          </label>
+
+          <button type="button" id="btnResetAllOffsets" class="btn-dark-sm" title="清空所有手动拖动偏移">
+            全部对齐归位
+          </button>
+        </div>
+
+        <div class="stage-tool-group">
+          <span style="color:#a78bfa;">💾 修改与上传内容已自动保存</span>
+          <span>缩放：</span>
+          <div class="zoom-ctrl">
+            <button type="button" id="btnZoomOut" title="缩小">−</button>
+            <span id="zoomPercentLabel">55%</span>
+            <button type="button" id="btnZoomIn" title="放大">+</button>
+            <button type="button" id="btnZoomFit" title="自适应窗口">适应</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="stageViewport" class="stage-viewport">
+        <div id="phoneStageShell" class="phone-stage-shell">
+          <canvas id="stageCanvas" width="1920" height="1080"></canvas>
+          <canvas id="overlayCanvas" width="1920" height="1080"></canvas>
+        </div>
+      </div>
+
+      <!-- 底部选中元素位置与删除状态浮条 -->
+      <div id="selectedGizmoBar" class="selected-gizmo-bar hidden">
+        <span id="selectedGizmoName">已选中元素</span>
+        <button type="button" id="btnResetSelectedOffset" class="btn-dark-sm">↺ 复位位置</button>
+        <button type="button" id="btnHideSelectedEl" class="btn-icon-danger" style="padding:5px 10px;font-size:12px;">
+          🗑️ 隐藏/删除此元素 (Del)
+        </button>
+      </div>
+
+      <!-- 画布直接点击就地编辑浮窗 + 隐藏直传文件选择器 -->
+      <div id="canvasInlineEditor" class="canvas-inline-editor hidden">
+        <div class="inline-editor-head">
+          <span id="inlineEditorTitle">✏️ 直接编辑文字</span>
+          <button type="button" id="btnCloseInlineEditor" class="mini-clear-btn" title="完成关闭">✓ 完成</button>
+        </div>
+        <input type="text" id="inlineEditorInput" class="ctrl-input" />
+        <textarea id="inlineEditorTextarea" class="ctrl-textarea hidden" rows="2"></textarea>
+        <div id="inlineEditorExtraActions" class="inline-editor-actions"></div>
+      </div>
+      <input type="file" id="directCanvasFilePicker" hidden />
+    </section>
+
+    <!-- 右侧：五大核心分组控制面板（严格保持 100% 简体中文） -->
+    <aside class="control-panel">
+
+      <!-- 吸顶丝滑快速跳转导航栏 -->
+      <nav class="panel-sticky-nav">
+        <button type="button" class="quick-jump-btn" data-jump-sec="sec-status">① 步骤</button>
+        <button type="button" class="quick-jump-btn" data-jump-sec="sec-play">② 商店</button>
+        <button type="button" class="quick-jump-btn" data-jump-sec="sec-nav">③ 导航</button>
+        <button type="button" class="quick-jump-btn" data-jump-sec="sec-user">④ 用户</button>
+        <button type="button" class="quick-jump-btn" data-jump-sec="sec-feed">⑤ 卡片</button>
+      </nav>
+
+      <!-- 已隐藏/已删除元素一键恢复中心（有隐藏项时自动显示） -->
+      <div id="hiddenManagerBox" class="hidden-manager-box hidden">
+        <div class="ai-box-head">
+          <span>👁️ 已隐藏的元素（点击标签即可恢复）</span>
+          <button type="button" id="btnRestoreAllHidden" class="btn-dark-sm">全部恢复</button>
+        </div>
+        <div id="hiddenChipsList" class="restore-chips-wrap"></div>
+      </div>
+
+      <!-- 画布简繁切换 + 透明背景一键切换 + 三处文字全同步总控 + 标志独立快捷上传区 -->
+      <div class="ai-box" style="padding:11px 13px;">
+        <div class="field-label">🌐 画布文字简繁一键切换（编辑栏固定为简体）</div>
+        <div class="grid-2-col">
+          <button type="button" class="pill-radio active" data-lang-btn="zh-CN">🇨🇳 画布显示简体</button>
+          <button type="button" class="pill-radio" data-lang-btn="zh-TW">🇭🇰 画布显示繁体</button>
+        </div>
+
+        <div class="field-label" style="margin-top:2px;">🏁 画布背景模式（点一下直接去黑底变透明）</div>
+        <div class="grid-3-col">
+          <button type="button" class="pill-radio active" data-theme-btn="dark">🌙 深色底</button>
+          <button type="button" class="pill-radio" data-theme-btn="transparent">🏁 透明背景</button>
+          <button type="button" class="pill-radio" data-theme-btn="full-transparent">✨ 全透明无框</button>
+        </div>
+
+        <hr class="sub-divider" />
+        <div class="ai-box-head">
+          <span>🔗 三处搜索文字同步总控（改任意一处，三处全变）</span>
+        </div>
+        <input
+          type="text"
+          id="inpGlobalId"
+          class="ctrl-input"
+          value="6182189"
+          placeholder="输入任意文字或编号，步骤3、搜索框、个人卡同步变更"
+          style="font-weight:700;font-size:15px;color:#fae8ff;"
+        />
+
+        <div class="field-label" style="margin-top:4px;">🖼️ Logo 独立上传管理（均可拖动与隐藏）</div>
+        <div class="grid-3-col">
+          <label class="btn-purple-outline" style="padding:6px 6px;font-size:11px;cursor:pointer;">
+            上传主 Logo
+            <input type="file" id="filePlayIconTop" accept="image/*" hidden />
+          </label>
+          <label class="btn-dark-sm" style="padding:6px 6px;font-size:11px;cursor:pointer;text-align:center;">
+            商店小 Logo
+            <input type="file" id="fileStoreLogo" accept="image/*" hidden />
+          </label>
+          <label class="btn-dark-sm" style="padding:6px 6px;font-size:11px;cursor:pointer;text-align:center;">
+            浮动贴纸 Logo
+            <input type="file" id="fileFloatingLogo" accept="image/*" hidden />
+          </label>
+        </div>
+        <button type="button" id="btnClearAllLogos" class="btn-dark-sm" style="width:100%;font-size:11px;">
+          ↺ 恢复全部默认 Logo
+        </button>
+      </div>
+
+      <!-- ==================== 分组 1：步骤标题与状态栏设置 ==================== -->
+      <section id="sec-status" class="acc-item open">
+        <button type="button" class="acc-header">
+          <span class="acc-title-wrap">
+            <span class="acc-step-num">1</span>
+            <span>步骤标题 ＆ 状态栏设置</span>
+          </span>
+          <span class="acc-arrow">▼</span>
+        </button>
+        <div class="acc-body">
+          <div class="section-subhead">横屏三大步骤引导标题（点画布文字可直接改字或按 Del 隐藏）</div>
+
+          <div class="field-group">
+            <label class="field-label">左栏上方：步骤 1 标题</label>
+            <input type="text" class="ctrl-input" data-bind="steps.step1" />
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">左栏下方：步骤 2 标题</label>
+            <input type="text" class="ctrl-input" data-bind="steps.step2" />
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">右栏上方：步骤 3 标题（与搜索框、卡片 ID 自动同步）</label>
+            <input type="text" class="ctrl-input" data-bind="steps.step3" />
+          </div>
+
+          <div class="grid-2-col">
+            <div class="field-group">
+              <label class="field-label">步骤字号 <span class="val-pill" data-val-for="steps.fontSize">40</span></label>
+              <input type="range" min="30" max="64" data-bind="steps.fontSize" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">双栏间距 <span class="val-pill" data-val-for="layout.colGap">44</span></label>
+              <input type="range" min="20" max="96" data-bind="layout.colGap" />
+            </div>
+          </div>
+
+          <hr class="sub-divider" />
+          <div class="section-subhead">手机系统状态栏（可选开启）</div>
+
+          <div class="grid-2-col">
+            <label class="chk-pill">
+              <input type="checkbox" data-bind="statusBar.enabled" /> 显示手机状态栏
+            </label>
+            <button type="button" id="btnRandomStatusPanel" class="btn-purple-outline" style="padding:6px 10px;font-size:12px;">
+              🎲 随机状态栏
+            </button>
+          </div>
+
+          <div class="grid-2-col">
+            <div class="field-group">
+              <label class="field-label">时间文字</label>
+              <input type="text" class="ctrl-input" data-bind="statusBar.time" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">电量百分比 <span class="val-pill" data-val-for="statusBar.battery">70</span></label>
+              <input type="range" min="1" max="100" data-bind="statusBar.battery" />
+            </div>
+          </div>
+
+          <div class="switch-grid">
+            <label class="chk-pill"><input type="checkbox" data-bind="statusBar.notifChat" /> 绿点聊天通知</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="statusBar.notifSocial" /> 社交应用通知</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="statusBar.notifNews" /> 资讯小图标</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="statusBar.alarm" /> 闹钟图标</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="statusBar.bluetooth" /> 蓝牙图标</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="statusBar.vpn" /> VPN 标志</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="statusBar.wifi" /> Wi-Fi 图标</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="statusBar.dualSim" /> 双卡信号显示</label>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 分组 2：应用条目（Google Play 卡片） ==================== -->
+      <section id="sec-play" class="acc-item">
+        <button type="button" class="acc-header">
+          <span class="acc-title-wrap">
+            <span class="acc-step-num">2</span>
+            <span>应用条目（商店卡 ＆ Logo）</span>
+          </span>
+          <span class="acc-arrow">▼</span>
+        </button>
+        <div class="acc-body">
+          <div class="upload-bar-row">
+            <label class="btn-purple-outline full-upload-label">
+              🖼️ 单独上传替换应用主 Logo
+              <input type="file" id="filePlayIcon" accept="image/*" hidden />
+            </label>
+            <button type="button" id="btnResetPlayIcon" class="btn-dark-sm">默认 Logo</button>
+          </div>
+
+          <div class="grid-2-col">
+            <div class="field-group">
+              <label class="field-label">商店顶栏名称</label>
+              <input type="text" class="ctrl-input" data-bind="playEntry.storeHeader" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">安装按钮文字</label>
+              <input type="text" class="ctrl-input" data-bind="playEntry.installText" />
+            </div>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">应用名称</label>
+            <input type="text" class="ctrl-input" data-bind="playEntry.appName" />
+          </div>
+
+          <div class="field-group">
+            <label class="field-label">公司名称</label>
+            <input type="text" class="ctrl-input" data-bind="playEntry.company" />
+          </div>
+
+          <div class="grid-2-col">
+            <div class="field-group">
+              <label class="field-label">评分数字</label>
+              <input type="text" class="ctrl-input" data-bind="playEntry.rating" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">评价数量说明</label>
+              <input type="text" class="ctrl-input" data-bind="playEntry.reviews" />
+            </div>
+          </div>
+
+          <div class="grid-2-col">
+            <div class="field-group">
+              <label class="field-label">包体大小</label>
+              <input type="text" class="ctrl-input" data-bind="playEntry.appSize" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">年龄分级说明</label>
+              <input type="text" class="ctrl-input" data-bind="playEntry.ageText" />
+            </div>
+          </div>
+
+          <div class="switch-grid">
+            <label class="chk-pill"><input type="checkbox" data-bind="playEntry.showCloseBtn" /> 显示右上角 ✕</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="playEntry.showPreviewStrip" /> 显示底部预览图</label>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 分组 3：标签导航 ==================== -->
+      <section id="sec-nav" class="acc-item">
+        <button type="button" class="acc-header">
+          <span class="acc-title-wrap">
+            <span class="acc-step-num">3</span>
+            <span>标签导航（可隐藏任意标签与图标）</span>
+          </span>
+          <span class="acc-arrow">▼</span>
+        </button>
+        <div class="acc-body">
+          <div class="section-subhead">顶部内容标签行</div>
+          <div id="topTabsEditorList"></div>
+
+          <div class="switch-grid">
+            <label class="chk-pill"><input type="checkbox" data-bind="navModule.showTrophy" /> 显示奖杯图标</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="navModule.showSearchIcon" /> 显示放大镜图标</label>
+            <label class="chk-pill" style="grid-column: span 2;">
+              <input type="checkbox" data-bind="navModule.showGuideArrows" /> 显示指引箭头（可单独移动或隐藏）
+            </label>
+          </div>
+
+          <div class="upload-bar-row">
+            <label class="btn-dark-sm" style="cursor:pointer;flex:1;text-align:center;">
+              🏆 替换奖杯图标
+              <input type="file" id="fileTrophyIcon" accept="image/*" hidden />
+            </label>
+            <label class="btn-dark-sm" style="cursor:pointer;flex:1;text-align:center;">
+              🔍 替换搜索图标
+              <input type="file" id="fileTopSearchIcon" accept="image/*" hidden />
+            </label>
+            <button type="button" id="btnResetNavRightIcons" class="btn-dark-sm">复位</button>
+          </div>
+
+          <hr class="sub-divider" />
+          <div class="section-subhead">底部导航栏</div>
+          <div id="bottomNavEditorList"></div>
+        </div>
+      </section>
+
+      <!-- ==================== 分组 4：个人信息卡片 ==================== -->
+      <section id="sec-user" class="acc-item open">
+        <button type="button" class="acc-header">
+          <span class="acc-title-wrap">
+            <span class="acc-step-num">4</span>
+            <span>个人信息卡片（地区/年龄/头像同步）</span>
+          </span>
+          <span class="acc-arrow">▼</span>
+        </button>
+        <div class="acc-body">
+          <div class="upload-bar-row">
+            <label class="btn-purple-outline full-upload-label">
+              👤 上传头像（自动同步到下方视频卡片）
+              <input type="file" id="fileUserAvatar" accept="image/*" hidden />
+            </label>
+            <button type="button" id="btnResetUserAvatar" class="btn-dark-sm">默认头像</button>
+          </div>
+
+          <button type="button" id="btnRandomUserProfile" class="btn-dark" style="width:100%;">
+            🎲 一键随机生成个人资料（年龄 / 等级 / 地区城市 / 距离状态）
+          </button>
+
+          <div class="grid-2-col">
+            <div class="field-group">
+              <label class="field-label">搜索框文字（三处同步）</label>
+              <input type="text" class="ctrl-input" data-bind="userModule.searchQuery" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">用户昵称（同步至下方卡片）</label>
+              <input type="text" class="ctrl-input" data-bind="userModule.nickname" />
+            </div>
+          </div>
+
+          <div class="grid-3-col">
+            <div class="field-group">
+              <label class="field-label">性别符号</label>
+              <select class="ctrl-select" data-bind="userModule.gender">
+                <option value="female">♀ 女</option>
+                <option value="male">♂ 男</option>
+                <option value="none">无符号</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label">年龄</label>
+              <input type="text" class="ctrl-input" data-bind="userModule.age" placeholder="22岁" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">等级徽章</label>
+              <input type="text" class="ctrl-input" data-bind="userModule.level" placeholder="Lv.22" />
+            </div>
+          </div>
+
+          <div class="grid-2-col">
+            <div class="field-group">
+              <label class="field-label">📍 地区 / 城市位置</label>
+              <input type="text" class="ctrl-input" data-bind="userModule.region" placeholder="台北 · 信义区" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">🟢 距离 / 在线状态</label>
+              <input type="text" class="ctrl-input" data-bind="userModule.distance" placeholder="1.2km · 当前在线" />
+            </div>
+          </div>
+
+          <div class="grid-2-col">
+            <div class="field-group">
+              <label class="field-label">🎧 声音 / 个性标签</label>
+              <input type="text" class="ctrl-input" data-bind="userModule.bioTag" placeholder="🎧 温柔甜妹音" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">个人卡片 ID（三处同步）</label>
+              <input type="text" class="ctrl-input" data-bind="userModule.userId" />
+            </div>
+          </div>
+
+          <div class="switch-grid">
+            <label class="chk-pill"><input type="checkbox" data-bind="userModule.showCursor" /> 显示输入光标</label>
+            <label class="chk-pill"><input type="checkbox" data-bind="userModule.showClearBtn" /> 显示清除 ×</label>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 分组 5：视频卡片流 + Gemini AI ==================== -->
+      <section id="sec-feed" class="acc-item open">
+        <button type="button" class="acc-header">
+          <span class="acc-title-wrap">
+            <span class="acc-step-num">5</span>
+            <span>视频卡片流（同步作者头像 ＆ 元素删除）</span>
+          </span>
+          <span class="acc-arrow">▼</span>
+        </button>
+        <div class="acc-body">
+          <label class="chk-pill">
+            <input type="checkbox" data-bind="feedModule.syncAuthorFromUser" />
+            👤 卡片底部自动同步显示上方用户的「头像 ＆ 昵称」（证明是该用户发布）
+          </label>
+
+          <div class="ai-box">
+            <div class="ai-box-head">
+              <span>✨ Gemini AI 自动生成标题与字幕</span>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">主题关键词 / 画面提示</label>
+              <input
+                type="text"
+                class="ctrl-input"
+                data-bind="aiConfig.topicPrompt"
+                placeholder="例如：深夜连麦、大龄女生破防、音色吐槽..."
+              />
+            </div>
+
+            <div class="grid-2-col">
+              <div class="field-group">
+                <label class="field-label">生成目标范围</label>
+                <select id="selAiTarget" class="ctrl-select" data-bind="aiConfig.targetCard">
+                  <option value="all">全部视频卡片</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label class="field-label">导出 MP4 秒数（0=自动）</label>
+                <input type="number" id="inpExportDuration" class="ctrl-input" value="0" min="0" max="60" />
+              </div>
+            </div>
+
+            <div class="upload-bar-row">
+              <button type="button" id="btnAiCopyPanel" class="btn-primary" style="flex:1;">
+                ✨ AI 生成文案
+              </button>
+              <button type="button" id="btnLocalInspire" class="btn-dark-sm" title="无需联网快速切换爆款灵感">
+                ⚡ 随机爆款词
+              </button>
+            </div>
+
+            <details style="font-size:11px;color:var(--text-muted);">
+              <summary style="cursor:pointer;user-select:none;">高级 API 设置（填写 Gemini Key / 可选 GAS 代理）</summary>
+              <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+                <label class="field-label">Gemini API Key</label>
+                <input type="text" class="ctrl-input" data-bind="aiConfig.apiKey" />
+                <label class="field-label">可选 Google Apps Script Web App URL</label>
+                <input
+                  type="text"
+                  class="ctrl-input"
+                  data-bind="aiConfig.gasProxyUrl"
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                />
+              </div>
+            </details>
+          </div>
+
+          <div id="feedCardsEditorList"></div>
+
+          <button type="button" id="btnAddFeedCard" class="btn-dark" style="width:100%;">
+            ＋ 新增视频卡片
+          </button>
+
+          <hr class="sub-divider" />
+          <label class="chk-pill">
+            <input type="checkbox" data-bind="feedModule.showFooterTitle" />
+            卡片底部显示单行帖子标题
+          </label>
+
+          <div class="grid-3-col">
+            <div class="field-group">
+              <label class="field-label">标题字号 <span class="val-pill" data-val-for="feedModule.titleFontSize">38</span></label>
+              <input type="range" min="24" max="56" data-bind="feedModule.titleFontSize" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">字幕字号 <span class="val-pill" data-val-for="feedModule.subtitleFontSize">24</span></label>
+              <input type="range" min="16" max="36" data-bind="feedModule.subtitleFontSize" />
+            </div>
+            <div class="field-group">
+              <label class="field-label">卡片圆角 <span class="val-pill" data-val-for="layout.cardRadius">20</span></label>
+              <input type="range" min="0" max="36" data-bind="layout.cardRadius" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </aside>
+  </main>
+
+  <!-- 导出 1920×1080 MP4 进度遮罩 -->
+  <div id="exportProgressModal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div style="font-size:16px;font-weight:700;color:#f5d0fe;">🎬 正在合成 1920×1080 高清横屏视频</div>
+      <div id="exportProgressText" style="font-size:13px;color:var(--text-muted);">准备中...</div>
+      <div class="progress-track">
+        <div id="exportProgressBar" class="progress-fill"></div>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">
+        提示：请保持当前标签页在前台显示，录制完成后将自动下载文件。
+      </div>
+      <button type="button" id="btnStopExportEarly" class="btn-dark">提前结束并保存当前片段</button>
+    </div>
+  </div>
+
+  <div id="appToast" class="app-toast"></div>
+
+  <!-- CDN 加载 OpenCC 简繁转换词库与 MP4 封装器（无网时自动退回内置字库与原生录制） -->
+  <script src="https://cdn.jsdelivr.net/npm/opencc-js@1.0.5/dist/umd/full.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js" defer></script>
+
+  <script src="./js/assets.js"></script>
+  <script src="./js/defaults.js"></script>
+  <script src="./js/storage-i18n.js"></script>
+  <script src="./js/renderer.js"></script>
+  <script src="./js/interaction.js"></script>
+  <script src="./js/ai-exporter.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>
