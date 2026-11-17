@@ -37,6 +37,13 @@
       return off ? { x: off.x || 0, y: off.y || 0 } : { x: 0, y: 0 };
     }
 
+    getFontPx(state, key, fallbackPx) {
+      if (global.LayaDefaults && typeof global.LayaDefaults.getEffectiveFontSize === 'function') {
+        return global.LayaDefaults.getEffectiveFontSize(state, key, fallbackPx);
+      }
+      return fallbackPx;
+    }
+
     registerHit(key, label, kind, x, y, w, h, parentModule) {
       this.hitBoxes.push({
         key,
@@ -102,23 +109,26 @@
         ctx.restore();
       }
 
-      const stepFontSize = Number(state.steps.fontSize) || 40;
-      const stepRowH = Math.max(58, Math.round(stepFontSize * 1.45));
+      const baseStepFont = Number(state.steps.fontSize) || 40;
+      const stepRowH = Math.max(58, Math.round(baseStepFont * 1.45));
+      const step1Font = this.getFontPx(state, 'step_title_1', baseStepFont);
+      const step2Font = this.getFontPx(state, 'step_title_2', baseStepFont);
+      const step3Font = this.getFontPx(state, 'step_title_3', baseStepFont);
 
-      // ==================== 左欄上半部：步驟 1 + 模組 1 ====================
+      // ==================== 左栏上半部：步骤 1 + 模块 1 ====================
       if (this.isVisible(state, 'step_title_1')) {
         this.renderStepHeading(
           ctx,
           state,
           'step_title_1',
-          '步驟 1 標題',
+          '步骤 1 标题',
           state.steps.step1,
           '01',
           leftColX,
           outerY,
           colW,
           stepRowH,
-          stepFontSize,
+          step1Font,
           isLight,
           isOuterTrans
         );
@@ -131,24 +141,24 @@
         const m1X = leftColX + m1Off.x;
         const m1Y = m1BaseY + m1Off.y;
         this.renderModule1(ctx, state, m1X, m1Y, colW, m1H, isFullTrans);
-        this.registerHit('module_1', '模組 1：Google Play 商店卡', 'module', m1X, m1Y, colW, m1H, 'module_1');
+        this.registerHit('module_1', '模块 1：Google Play 商店卡', 'module', m1X, m1Y, colW, m1H, 'module_1');
       }
 
-      // ==================== 左欄下半部：步驟 2 + 模組 2 ====================
+      // ==================== 左栏下半部：步骤 2 + 模块 2 ====================
       const step2BaseY = m1BaseY + m1H + 20;
       if (this.isVisible(state, 'step_title_2')) {
         this.renderStepHeading(
           ctx,
           state,
           'step_title_2',
-          '步驟 2 標題',
+          '步骤 2 标题',
           state.steps.step2,
           '02',
           leftColX,
           step2BaseY,
           colW,
           stepRowH,
-          stepFontSize,
+          step2Font,
           isLight,
           isOuterTrans
         );
@@ -161,23 +171,23 @@
         const m2X = leftColX + m2Off.x;
         const m2Y = m2BaseY + m2Off.y;
         this.renderModule2(ctx, state, m2X, m2Y, colW, m2H, isFullTrans);
-        this.registerHit('module_2', '模組 2：標籤欄與底部導航', 'module', m2X, m2Y, colW, m2H, 'module_2');
+        this.registerHit('module_2', '模块 2：标签栏与底部导航', 'module', m2X, m2Y, colW, m2H, 'module_2');
       }
 
-      // ==================== 右欄上半部：步驟 3 + 模組 3 ====================
+      // ==================== 右栏上半部：步骤 3 + 模块 3 ====================
       if (this.isVisible(state, 'step_title_3')) {
         this.renderStepHeading(
           ctx,
           state,
           'step_title_3',
-          '步驟 3 標題',
+          '步骤 3 标题',
           state.steps.step3,
           '03',
           rightColX,
           outerY,
           colW,
           stepRowH,
-          stepFontSize,
+          step3Font,
           isLight,
           isOuterTrans
         );
@@ -190,10 +200,10 @@
         const m3X = rightColX + m3Off.x;
         const m3Y = m3BaseY + m3Off.y;
         this.renderModule3(ctx, state, m3X, m3Y, colW, m3H, isFullTrans);
-        this.registerHit('module_3', '模組 3：搜索與個人信息卡片', 'module', m3X, m3Y, colW, m3H, 'module_3');
+        this.registerHit('module_3', '模块 3：搜索与个人信息卡片', 'module', m3X, m3Y, colW, m3H, 'module_3');
       }
 
-      // ==================== 右欄下半部：模組 4 (雙列視頻卡片流) ====================
+      // ==================== 右栏下半部：模块 4 (双列视频卡片流) ====================
       const m4BaseY = m3BaseY + m3H + 14;
       const availM4H = Math.max(460, H - outerY - m4BaseY);
       if (this.isVisible(state, 'module_4')) {
@@ -201,10 +211,10 @@
         const m4X = rightColX + m4Off.x;
         const m4Y = m4BaseY + m4Off.y;
         const m4H = this.renderModule4(ctx, state, m4X, m4Y, colW, availM4H, isFullTrans);
-        this.registerHit('module_4', '模組 4：雙列視頻卡片流', 'module', m4X, m4Y, colW, m4H, 'module_4');
+        this.registerHit('module_4', '模块 4：双列视频卡片流', 'module', m4X, m4Y, colW, m4H, 'module_4');
       }
 
-      // ==================== 獨立上傳的浮動品牌 Logo 貼紙（可拖動、可隱藏） ====================
+      // ==================== 独立上传的浮动品牌 Logo 贴纸（可拖动、可隐藏） ====================
       if (this.media.floatingLogo && this.isVisible(state, 'floating_brand_logo')) {
         const flOff = this.getOffset(state, 'floating_brand_logo');
         const flW = 128;
@@ -216,7 +226,7 @@
         ctx.shadowBlur = 14;
         this.drawContainImage(ctx, this.media.floatingLogo, flX, flY, flW, flH);
         ctx.restore();
-        this.registerHit('floating_brand_logo', '獨立浮動 Logo', 'element', flX, flY, flW, flH, 'floating_brand_logo');
+        this.registerHit('floating_brand_logo', '独立浮动 Logo', 'element', flX, flY, flW, flH, 'floating_brand_logo');
       }
     }
 
@@ -490,17 +500,18 @@
         } else {
           this.drawGooglePlayLogo(ctx, slX, slY, 15);
         }
-        this.registerHit('play_store_logo', '商店左上小標 Logo', 'element', slX - 20, slY - 20, 40, 40, 'module_1');
+        this.registerHit('play_store_logo', '商店左上小标 Logo', 'element', slX - 20, slY - 20, 40, 40, 'module_1');
       }
 
       if (this.isVisible(state, 'play_header')) {
         const hdrOff = this.getOffset(state, 'play_header');
         const hdrX = x + padX + 40 + hdrOff.x;
         const hy = hdrY + 1 + hdrOff.y;
-        ctx.font = `600 30px ${FONT_SANS}`;
+        const hdrFs = this.getFontPx(state, 'play_header', 30);
+        ctx.font = `600 ${hdrFs}px ${FONT_SANS}`;
         this.fillReadableText(ctx, pe.storeHeader || 'Google Play', hdrX, hy, '#ececf4', isFullTrans);
         const hw = ctx.measureText(pe.storeHeader || 'Google Play').width;
-        this.registerHit('play_header', 'Google Play 標題', 'element', hdrX - 4, hy - 20, hw + 12, 40, 'module_1');
+        this.registerHit('play_header', 'Google Play 标题', 'element', hdrX - 4, hy - hdrFs * 0.65, hw + 12, Math.max(36, hdrFs * 1.3), 'module_1');
       }
 
       if (pe.showCloseBtn && this.isVisible(state, 'play_close')) {
@@ -521,7 +532,7 @@
         ctx.moveTo(closeX + 8, closeY - 8);
         ctx.lineTo(closeX - 8, closeY + 8);
         ctx.stroke();
-        this.registerHit('play_close', '商店右上關閉鈕', 'element', closeX - 22, closeY - 22, 44, 44, 'module_1');
+        this.registerHit('play_close', '商店右上关闭钮', 'element', closeX - 22, closeY - 22, 44, 44, 'module_1');
       }
 
       if (!isFullTrans) {
@@ -529,7 +540,7 @@
         ctx.fillRect(x + padX, curY + Math.round(78 * vScale), w - padX * 2, 1);
       }
 
-      // 2) 應用主 Logo（支持單獨上傳替換、移動、隱藏）
+      // 2) 应用主 Logo（支持单独上传替换、移动、隐藏）
       const appRowY = curY + Math.round(102 * vScale);
       const iconSize = Math.round(118 * vScale);
       if (this.isVisible(state, 'play_icon')) {
@@ -558,12 +569,15 @@
         ctx.lineWidth = 1.6;
         ctx.stroke();
         ctx.restore();
-        this.registerHit('play_icon', '應用主 Logo 圖標', 'element', iconX, iconY, iconSize, iconSize, 'module_1');
+        this.registerHit('play_icon', '应用主 Logo 图标', 'element', iconX, iconY, iconSize, iconSize, 'module_1');
       }
 
-      // 右側「安裝」按鈕
-      const btnW = 148;
-      const btnH = 60;
+      // 右侧「安装」按钮与「包含内购商品」小字
+      const instFs = this.getFontPx(state, 'play_install', 26);
+      ctx.font = `600 ${instFs}px ${FONT_SANS}`;
+      const instLabel = pe.installText || '安装';
+      const btnW = Math.max(148, Math.round(ctx.measureText(instLabel).width + 52));
+      const btnH = Math.max(54, Math.round(instFs * 2.2));
       const btnBaseX = x + w - padX - btnW;
       if (this.isVisible(state, 'play_install')) {
         const instOff = this.getOffset(state, 'play_install');
@@ -575,60 +589,70 @@
         btnBg.addColorStop(0, 'rgba(96, 165, 250, 0.18)');
         btnBg.addColorStop(1, 'rgba(168, 85, 247, 0.18)');
         ctx.fillStyle = btnBg;
-        this.roundRect(ctx, btnX, btnY, btnW, btnH, 30);
+        this.roundRect(ctx, btnX, btnY, btnW, btnH, btnH / 2);
         ctx.fill();
         ctx.strokeStyle = '#7cb3fc';
         ctx.lineWidth = 2;
         ctx.stroke();
         ctx.restore();
 
-        ctx.font = `600 26px ${FONT_SANS}`;
+        ctx.font = `600 ${instFs}px ${FONT_SANS}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        this.fillReadableText(ctx, pe.installText || '安裝', btnX + btnW / 2, btnY + btnH / 2 + 1, '#a8c7fa', isFullTrans);
+        this.fillReadableText(ctx, instLabel, btnX + btnW / 2, btnY + btnH / 2 + 1, '#a8c7fa', isFullTrans);
+        this.registerHit('play_install', '安装按钮', 'element', btnX, btnY, btnW, btnH, 'module_1');
 
         if (pe.inAppText && this.isVisible(state, 'play_inapp')) {
-          ctx.font = `400 16px ${FONT_SANS}`;
-          this.fillReadableText(ctx, pe.inAppText, btnX + btnW / 2, btnY + btnH + 19, '#949ab0', isFullTrans);
+          const inOff = this.getOffset(state, 'play_inapp');
+          const inFs = this.getFontPx(state, 'play_inapp', 16);
+          const inX = btnX + btnW / 2 + inOff.x;
+          const inY = btnY + btnH + Math.max(18, Math.round(inFs * 1.15)) + inOff.y;
+          ctx.font = `400 ${inFs}px ${FONT_SANS}`;
+          this.fillReadableText(ctx, pe.inAppText, inX, inY, '#949ab0', isFullTrans);
+          const inW = ctx.measureText(pe.inAppText).width + 14;
+          this.registerHit('play_inapp', '包含内购小字', 'element', inX - inW / 2, inY - inFs * 0.7, inW, Math.max(24, inFs * 1.4), 'module_1');
         }
-        this.registerHit('play_install', '安裝按鈕', 'element', btnX, btnY, btnW, btnH + 28, 'module_1');
       }
 
-      // 中間應用名稱與公司名稱
+      // 中间应用名称与公司名称
       const textX = x + padX + iconSize + 26;
-      const maxTW = Math.max(180, btnBaseX - 24 - textX);
+      const maxTW = Math.max(160, btnBaseX - 24 - textX);
 
       if (this.isVisible(state, 'play_title')) {
         const titleOff = this.getOffset(state, 'play_title');
         const tX = textX + titleOff.x;
         const tY = appRowY + 34 + titleOff.y;
-        ctx.font = `700 28px ${FONT_SANS}`;
+        const titleFs = this.getFontPx(state, 'play_title', 28);
+        ctx.font = `700 ${titleFs}px ${FONT_SANS}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         const renderedName = this.truncateText(ctx, pe.appName || '', maxTW);
         this.fillReadableText(ctx, renderedName, tX, tY, '#f8fafc', isFullTrans);
-        this.registerHit('play_title', '應用名稱', 'element', tX, tY - 18, maxTW, 36, 'module_1');
+        this.registerHit('play_title', '应用名称', 'element', tX, tY - titleFs * 0.65, maxTW, Math.max(34, titleFs * 1.3), 'module_1');
       }
 
       if (this.isVisible(state, 'play_meta')) {
         const metaOff = this.getOffset(state, 'play_meta');
         const mX = textX + metaOff.x;
         const mY = appRowY + 78 + metaOff.y;
-        ctx.font = `500 22px ${FONT_SANS}`;
+        const metaFs = this.getFontPx(state, 'play_meta', 22);
+        ctx.font = `500 ${metaFs}px ${FONT_SANS}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         const renderedComp = this.truncateText(ctx, pe.company || '', maxTW);
         this.fillReadableText(ctx, renderedComp, mX, mY, '#9ca3b8', isFullTrans);
-        this.registerHit('play_meta', '公司名稱', 'element', mX, mY - 15, maxTW, 30, 'module_1');
+        this.registerHit('play_meta', '公司名称', 'element', mX, mY - metaFs * 0.65, maxTW, Math.max(28, metaFs * 1.3), 'module_1');
       }
 
-      // 3) 三欄數據指標面板
+      // 3) 三栏数据指标面板
       if (this.isVisible(state, 'play_stats')) {
         const stOff = this.getOffset(state, 'play_stats');
         const panelY = curY + Math.round(252 * vScale) + stOff.y;
         const panelH = Math.round(96 * vScale);
         const panelX = x + padX + stOff.x;
         const panelW = w - padX * 2;
+        const statNumFs = this.getFontPx(state, 'play_stats_num', 26);
+        const statSubFs = this.getFontPx(state, 'play_stats', 19);
 
         if (!isFullTrans) {
           ctx.fillStyle = 'rgba(255, 255, 255, 0.035)';
@@ -641,15 +665,15 @@
         const thirdW = panelW / 3;
 
         const c1X = panelX + thirdW * 0.5;
-        ctx.font = `700 26px ${FONT_SANS}`;
+        ctx.font = `700 ${statNumFs}px ${FONT_SANS}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         const rStr = String(pe.rating || '4.8');
         const rW = ctx.measureText(rStr).width;
         this.fillReadableText(ctx, rStr, c1X - 12, statsTopY, '#f1f5f9', isFullTrans);
-        this.drawStar(ctx, c1X + rW / 2 + 5, statsTopY - 1, 9.5, '#60a5fa');
+        this.drawStar(ctx, c1X + rW / 2 + 5, statsTopY - 1, Math.max(8, statNumFs * 0.36), '#60a5fa');
 
-        ctx.font = `400 19px ${FONT_SANS}`;
+        ctx.font = `400 ${statSubFs}px ${FONT_SANS}`;
         this.fillReadableText(ctx, pe.reviews || '18万 条评价 ⓘ', c1X, statsBotY, '#9499ad', isFullTrans);
 
         ctx.fillStyle = 'rgba(255,255,255,0.1)';
@@ -662,7 +686,7 @@
         ctx.stroke();
         this.drawDownloadTrayIcon(ctx, c2X, statsTopY, '#e2e8f0', 0.82);
 
-        ctx.font = `400 19px ${FONT_SANS}`;
+        ctx.font = `400 ${statSubFs}px ${FONT_SANS}`;
         this.fillReadableText(ctx, pe.appSize || '133 MB', c2X, statsBotY, '#9499ad', isFullTrans);
 
         ctx.fillStyle = 'rgba(255,255,255,0.1)';
@@ -675,21 +699,21 @@
         ctx.fillStyle = '#f1f5f9';
         this.roundRect(ctx, -14, -14, 28, 28, 4);
         ctx.fill();
-        ctx.font = `900 19px ${FONT_SANS}`;
+        ctx.font = `900 ${Math.min(24, Math.round(statNumFs * 0.74))}px ${FONT_SANS}`;
         ctx.fillStyle = '#12111a';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(pe.ageBadge || 'M', 0, 1);
         ctx.restore();
 
-        ctx.font = `400 19px ${FONT_SANS}`;
+        ctx.font = `400 ${statSubFs}px ${FONT_SANS}`;
         ctx.textAlign = 'center';
         this.fillReadableText(ctx, this.truncateText(ctx, pe.ageText || '', thirdW - 18), c3X, statsBotY, '#9499ad', isFullTrans);
 
-        this.registerHit('play_stats', '評分與大小欄', 'element', panelX, panelY, panelW, panelH, 'module_1');
+        this.registerHit('play_stats', '评分与大小栏', 'element', panelX, panelY, panelW, panelH, 'module_1');
       }
 
-      // 4) 底部紫色預覽海報橫條（支持直接點擊上傳替換）
+      // 4) 底部紫色预览海报横条（支持直接点击上传替换）
       const stripSource = this.media.playStrip || raw.play_strip;
       if (
         pe.showPreviewStrip &&
@@ -710,7 +734,7 @@
         this.drawCoverImage(ctx, stripSource, stripX, stripY, stripW, stripH);
         ctx.restore();
 
-        this.registerHit('play_strip', '底部預覽海報條', 'element', stripX, stripY, stripW, stripH, 'module_1');
+        this.registerHit('play_strip', '底部预览海报条', 'element', stripX, stripY, stripW, stripH, 'module_1');
       }
 
       ctx.restore();
@@ -770,7 +794,8 @@
 
       if (this.isVisible(state, 'sb_time')) {
         const timeOff = this.getOffset(state, 'sb_time');
-        ctx.font = `600 22px ${FONT_SANS}`;
+        const timeFs = this.getFontPx(state, 'sb_time', 22);
+        ctx.font = `600 ${timeFs}px ${FONT_SANS}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         const timeStr = sb.time || '11:39';
@@ -778,7 +803,7 @@
         const ty = cy + timeOff.y;
         this.fillReadableText(ctx, timeStr, tx, ty, '#f1f3f4', isFullTrans);
         const tw = ctx.measureText(timeStr).width;
-        this.registerHit('sb_time', '狀態欄時間', 'element', tx - 4, ty - 14, tw + 8, 28, 'module_1');
+        this.registerHit('sb_time', '状态栏时间', 'element', tx - 4, ty - timeFs * 0.65, tw + 8, Math.max(26, timeFs * 1.3), 'module_1');
 
         if (this.isVisible(state, 'sb_notifs')) {
           let nx = tx + tw + 14;
@@ -796,7 +821,7 @@
             nx += 28;
           }
           if (nx > tx + tw + 14) {
-            this.registerHit('sb_notifs', '狀態欄通知圖標', 'element', tx + tw + 10, cy - 14, nx - (tx + tw + 10), 28, 'module_1');
+            this.registerHit('sb_notifs', '状态栏通知图标', 'element', tx + tw + 10, cy - 14, nx - (tx + tw + 10), 28, 'module_1');
           }
         }
       }
@@ -844,7 +869,7 @@
           rx -= 22;
           this.drawAlarmIcon(ctx, rx + 11, ry + 1);
         }
-        this.registerHit('sb_system', '狀態欄右側系統群', 'element', rx - 6, ry - 14, rightStart - rx + 8, 28, 'module_1');
+        this.registerHit('sb_system', '状态栏右侧系统群', 'element', rx - 6, ry - 14, rightStart - rx + 8, 28, 'module_1');
       }
 
       ctx.restore();
@@ -897,14 +922,15 @@
         const tOff = this.getOffset(state, key);
         const drawX = tabX + tOff.x;
         const drawY = topCenterY + tOff.y;
+        const tabFs = this.getFontPx(state, key, isActive ? 40 : 33);
 
         ctx.save();
         if (isActive) {
-          ctx.font = `900 40px ${FONT_SANS}`;
+          ctx.font = `900 ${tabFs}px ${FONT_SANS}`;
           const tw = ctx.measureText(tabLabel).width;
 
           if (raw.nav_glow && raw.nav_glow.complete && raw.nav_glow.naturalWidth) {
-            ctx.drawImage(raw.nav_glow, drawX - 14, drawY - 8, tw + 48, 62);
+            ctx.drawImage(raw.nav_glow, drawX - 14, drawY - 8, tw + 48, Math.max(54, Math.round(tabFs * 1.55)));
           }
 
           ctx.shadowColor = 'rgba(217, 70, 239, 0.65)';
@@ -913,16 +939,16 @@
           ctx.textBaseline = 'middle';
           this.fillReadableText(ctx, tabLabel, drawX, drawY, '#ffffff', isFullTrans);
 
-          this.registerHit(key, `頂部標籤：${tabLabel}`, 'element', drawX - 6, drawY - 24, tw + 32, 56, 'module_2');
+          this.registerHit(key, `顶部标签：${tabLabel}`, 'element', drawX - 6, drawY - tabFs * 0.65, tw + 32, Math.max(48, tabFs * 1.4), 'module_2');
           tabX += tw + 46;
         } else {
-          ctx.font = `500 33px ${FONT_SANS}`;
+          ctx.font = `500 ${tabFs}px ${FONT_SANS}`;
           const tw = ctx.measureText(tabLabel).width;
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
           this.fillReadableText(ctx, tabLabel, drawX, drawY + 2, '#8b899e', isFullTrans);
 
-          this.registerHit(key, `頂部標籤：${tabLabel}`, 'element', drawX - 6, drawY - 20, tw + 12, 42, 'module_2');
+          this.registerHit(key, `顶部标签：${tabLabel}`, 'element', drawX - 6, drawY - tabFs * 0.62, tw + 12, Math.max(38, tabFs * 1.3), 'module_2');
           tabX += tw + 44;
         }
         ctx.restore();
@@ -947,7 +973,7 @@
         } else {
           this.drawMagnifier(ctx, searchIconCX, searchIconCY, 14, '#ffffff', 4.2);
         }
-        this.registerHit('nav_top_search', '標籤欄搜索圖標', 'element', searchIconCX - 26, searchIconCY - 26, 52, 52, 'module_2');
+        this.registerHit('nav_top_search', '标签栏搜索图标', 'element', searchIconCX - 26, searchIconCY - 26, 52, 52, 'module_2');
       }
 
       if (nav.showTrophy && this.isVisible(state, 'nav_top_trophy')) {
@@ -960,7 +986,7 @@
         } else if (raw.nav_trophy && raw.nav_trophy.complete && raw.nav_trophy.naturalWidth) {
           ctx.drawImage(raw.nav_trophy, cx - 25, cy - 28, 50, 58);
         }
-        this.registerHit('nav_top_trophy', '標籤欄獎盃圖標', 'element', cx - 26, cy - 28, 52, 56, 'module_2');
+        this.registerHit('nav_top_trophy', '标签栏奖杯图标', 'element', cx - 26, cy - 28, 52, 56, 'module_2');
       }
 
       const botBaseY = y + h - padY - 72;
@@ -1014,12 +1040,13 @@
           }
         }
 
-        ctx.font = `${isActive ? '700' : '500'} 22px ${FONT_SANS}`;
+        const botFs = this.getFontPx(state, key, 22);
+        ctx.font = `${isActive ? '700' : '500'} ${botFs}px ${FONT_SANS}`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         this.fillReadableText(ctx, item.label, cx, labelY, isActive ? '#f0abfc' : '#7c7a91', isFullTrans);
 
-        this.registerHit(key, `底部導航：${item.label}`, 'element', cx - 46, iconCY - 34, 92, 108, 'module_2');
+        this.registerHit(key, `底部导航：${item.label}`, 'element', cx - 46, iconCY - 34, 92, 108, 'module_2');
       });
 
       if (nav.showGuideArrows !== false) {
@@ -1043,7 +1070,7 @@
           const a1TipX = funIconCX + 34 + bob1 + afOff.x;
           const a1TipY = funIconCY + 8 + afOff.y;
           this.drawSleekPointerArrow(ctx, a1TipX + 108, a1TipY + 6, a1TipX, a1TipY);
-          this.registerHit('nav_arrow_fun', '娛樂指引箭頭', 'element', funIconCX + 34 + afOff.x, a1TipY - 24, 114, 52, 'module_2');
+          this.registerHit('nav_arrow_fun', '娱乐指引箭头', 'element', funIconCX + 34 + afOff.x, a1TipY - 24, 114, 52, 'module_2');
         }
 
         if (nav.showSearchIcon && this.isVisible(state, 'nav_arrow_search')) {
@@ -1062,7 +1089,7 @@
           const a2TipX = searchIconCX + asOff.x;
           const a2TipY = searchIconCY + 32 + bob2 + asOff.y;
           this.drawSleekPointerArrow(ctx, a2TipX + 2, a2TipY + 114, a2TipX, a2TipY);
-          this.registerHit('nav_arrow_search', '搜索指引箭頭', 'element', a2TipX - 26, searchIconCY + 32 + asOff.y, 52, 120, 'module_2');
+          this.registerHit('nav_arrow_search', '搜索指引箭头', 'element', a2TipX - 26, searchIconCY + 32 + asOff.y, 52, 120, 'module_2');
         }
       }
 
@@ -1167,10 +1194,11 @@
       const userCardH = 152;
 
       const cancelStr = um.cancelText || '取消';
-      ctx.font = `600 27px ${FONT_SANS}`;
+      const cancelFs = this.getFontPx(state, 'user_cancel_btn', 27);
+      ctx.font = `600 ${cancelFs}px ${FONT_SANS}`;
       const cancelW = this.isVisible(state, 'user_cancel_btn') ? ctx.measureText(cancelStr).width : 0;
 
-      // 1) 搜索輸入框
+      // 1) 搜索输入框
       const boxY = y + padY;
       const boxCY = boxY + searchBarH / 2;
       if (this.isVisible(state, 'user_search_box')) {
@@ -1215,7 +1243,8 @@
         this.drawMagnifier(ctx, boxX + 38, drawCY, 12, '#e2e8f0', 3.5);
 
         const qStr = String(um.searchQuery || '');
-        ctx.font = `700 30px ${FONT_SANS}`;
+        const searchFs = this.getFontPx(state, 'user_search_box', 30);
+        ctx.font = `700 ${searchFs}px ${FONT_SANS}`;
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
@@ -1226,8 +1255,9 @@
           const t = this.animTime || 0;
           const cursorAlpha = t > 0 ? 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * 5.6)) : 1;
           const qw = ctx.measureText(qStr).width;
+          const curH = Math.max(22, Math.round(searchFs * 1.12));
           ctx.fillStyle = `rgba(96, 165, 250, ${cursorAlpha.toFixed(3)})`;
-          ctx.fillRect(textStartX + qw + 4, drawCY - 17, 3.2, 34);
+          ctx.fillRect(textStartX + qw + 4, drawCY - curH / 2, 3.2, curH);
         }
 
         if (um.showClearBtn) {
@@ -1246,40 +1276,41 @@
           ctx.lineTo(clX - 5.5, drawCY + 5.5);
           ctx.stroke();
         }
-        this.registerHit('user_search_box', '搜索輸入框', 'element', boxX, drawBoxY, boxW, searchBarH, 'module_3');
+        this.registerHit('user_search_box', '搜索输入框', 'element', boxX, drawBoxY, boxW, searchBarH, 'module_3');
       }
 
       if (this.isVisible(state, 'user_cancel_btn')) {
         const cancelOff = this.getOffset(state, 'user_cancel_btn');
         const cancelX = x + w - padX - cancelW + cancelOff.x;
         const cancelY = boxCY + cancelOff.y;
-        ctx.font = `600 27px ${FONT_SANS}`;
+        ctx.font = `600 ${cancelFs}px ${FONT_SANS}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         this.fillReadableText(ctx, cancelStr, cancelX, cancelY, '#e2e8f0', isFullTrans);
-        this.registerHit('user_cancel_btn', '取消按鈕文字', 'element', cancelX - 6, cancelY - 18, cancelW + 12, 36, 'module_3');
+        this.registerHit('user_cancel_btn', '取消按钮文字', 'element', cancelX - 6, cancelY - cancelFs * 0.65, cancelW + 12, Math.max(32, cancelFs * 1.3), 'module_3');
       }
 
-      // 2) 「用户」小標題
+      // 2) 「用户」小标题
       if (this.isVisible(state, 'user_section_label')) {
         const secOff = this.getOffset(state, 'user_section_label');
         const secX = x + padX + 4 + secOff.x;
         const secY = y + padY + searchBarH + gap + sectionTitleH / 2 + secOff.y;
         const secText = um.sectionTitle || '用户';
-        ctx.font = `700 23px ${FONT_SANS}`;
+        const secFs = this.getFontPx(state, 'user_section_label', 23);
+        ctx.font = `700 ${secFs}px ${FONT_SANS}`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
         this.fillReadableText(ctx, secText, secX, secY, '#cbd5e1', isFullTrans);
-        this.registerHit('user_section_label', '用戶分組標題', 'element', secX - 4, secY - 16, ctx.measureText(secText).width + 12, 32, 'module_3');
+        this.registerHit('user_section_label', '用户分组标题', 'element', secX - 4, secY - secFs * 0.65, ctx.measureText(secText).width + 12, Math.max(28, secFs * 1.3), 'module_3');
       }
 
-      // 3) 豐富個人信息膠囊卡片（含頭像、暱稱、年齡徽章、等級徽章、聲音標籤、ID、地區城市、距離在線狀態）
+      // 3) 丰富个人信息胶囊卡片（含头像、昵称、年龄徽章、等级徽章、声音标签、ID、地区城市、距离在线状态）
       if (this.isVisible(state, 'user_capsule_card')) {
         const cardOff = this.getOffset(state, 'user_capsule_card');
         const cardX = x + padX + cardOff.x;
         const cardY = y + padY + searchBarH + gap + sectionTitleH + Math.round(gap * 0.6) + cardOff.y;
         const cardW = w - padX * 2;
-        const cardR = 32; // 大圓角精緻名片膠囊，容納多維度個人標籤更舒展
+        const cardR = 32;
 
         ctx.save();
         ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
@@ -1313,9 +1344,9 @@
         ctx.stroke();
         ctx.restore();
 
-        this.registerHit('user_capsule_card', '個人信息膠囊卡', 'element', cardX, cardY, cardW, userCardH, 'module_3');
+        this.registerHit('user_capsule_card', '个人信息胶囊卡', 'element', cardX, cardY, cardW, userCardH, 'module_3');
 
-        // 圓形頭像
+        // 圆形头像
         const avSize = 112;
         const baseInfoX = cardX + 20 + avSize + 22;
         if (this.isVisible(state, 'user_avatar')) {
@@ -1340,10 +1371,10 @@
             ctx.stroke();
             ctx.restore();
           }
-          this.registerHit('user_avatar', '用戶圓形頭像', 'element', avX, avY, avSize, avSize, 'module_3');
+          this.registerHit('user_avatar', '用户圆形头像', 'element', avX, avY, avSize, avSize, 'module_3');
         }
 
-        // 第一行：暱稱 + 年齡性別徽章 + 等級徽章 + 聲音標籤
+        // 第一行：昵称 + 年龄性别徽章 + 等级徽章 + 声音标签
         let row1CurX = baseInfoX;
         const row1Y = cardY + 38;
 
@@ -1352,21 +1383,24 @@
           const nx = row1CurX + nickOff.x;
           const ny = row1Y + nickOff.y;
           const nickStr = um.nickname || '小猫/花泽类';
-          ctx.font = `700 29px ${FONT_SANS}`;
+          const nickFs = this.getFontPx(state, 'user_nickname', 29);
+          ctx.font = `700 ${nickFs}px ${FONT_SANS}`;
           ctx.fillStyle = '#ffffff';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
           ctx.fillText(nickStr, nx, ny);
           const nw = ctx.measureText(nickStr).width;
-          this.registerHit('user_nickname', '用戶暱稱', 'element', nx - 4, ny - 18, nw + 8, 36, 'module_3');
+          this.registerHit('user_nickname', '用户昵称', 'element', nx - 4, ny - nickFs * 0.65, nw + 8, Math.max(32, nickFs * 1.3), 'module_3');
           row1CurX += nw + 12;
         }
 
-        // 性別 + 年齡徽章（例如 ♀ 22岁）
+        // 性别 + 年龄徽章（例如 ♀ 22岁）
         if (um.age && this.isVisible(state, 'user_age_badge')) {
           const ageOff = this.getOffset(state, 'user_age_badge');
+          const ageFs = this.getFontPx(state, 'user_age_badge', 17);
           const genderSym = um.gender === 'female' ? '♀' : um.gender === 'male' ? '♂' : '';
           const ageStr = `${genderSym} ${um.age}`.trim();
+          const ph = Math.max(24, Math.round(ageFs * 1.52));
           const pw = this.drawTagPill(
             ctx,
             ageStr,
@@ -1374,15 +1408,18 @@
             row1Y + ageOff.y,
             um.gender === 'male' ? '#2563eb' : '#db2777',
             um.gender === 'male' ? '#0ea5e9' : '#ec4899',
-            '#ffffff'
+            '#ffffff',
+            ageFs
           );
-          this.registerHit('user_age_badge', '年齡性別徽章', 'element', row1CurX + ageOff.x, row1Y - 14 + ageOff.y, pw, 28, 'module_3');
+          this.registerHit('user_age_badge', '年龄性别徽章', 'element', row1CurX + ageOff.x, row1Y - ph / 2 + ageOff.y, pw, ph + 2, 'module_3');
           row1CurX += pw + 8;
         }
 
-        // 等級徽章（例如 Lv.22）
+        // 等级徽章（例如 Lv.22）
         if (um.level && this.isVisible(state, 'user_level_badge')) {
           const lvOff = this.getOffset(state, 'user_level_badge');
+          const lvFs = this.getFontPx(state, 'user_level_badge', 17);
+          const ph = Math.max(24, Math.round(lvFs * 1.52));
           const pw = this.drawTagPill(
             ctx,
             String(um.level),
@@ -1390,24 +1427,28 @@
             row1Y + lvOff.y,
             '#7e22ce',
             '#a855f7',
-            '#fae8ff'
+            '#fae8ff',
+            lvFs
           );
-          this.registerHit('user_level_badge', '等級徽章', 'element', row1CurX + lvOff.x, row1Y - 14 + lvOff.y, pw, 28, 'module_3');
+          this.registerHit('user_level_badge', '等级徽章', 'element', row1CurX + lvOff.x, row1Y - ph / 2 + lvOff.y, pw, ph + 2, 'module_3');
           row1CurX += pw + 8;
         }
 
-        // 聲音/個性標籤（例如 🎧 温柔甜妹音）
+        // 声音/个性标签（例如 🎧 温柔甜妹音）
         if (um.bioTag && this.isVisible(state, 'user_bio_tag')) {
           const bioOff = this.getOffset(state, 'user_bio_tag');
+          const bioFs = this.getFontPx(state, 'user_bio_tag', 17);
+          const ph = Math.max(24, Math.round(bioFs * 1.52));
           const pw = this.drawSubtleGlassPill(
             ctx,
             um.bioTag,
             row1CurX + bioOff.x,
             row1Y + bioOff.y,
             'rgba(216, 180, 254, 0.16)',
-            '#f3e8ff'
+            '#f3e8ff',
+            bioFs
           );
-          this.registerHit('user_bio_tag', '聲音個性標籤', 'element', row1CurX + bioOff.x, row1Y - 14 + bioOff.y, pw, 28, 'module_3');
+          this.registerHit('user_bio_tag', '声音个性标签', 'element', row1CurX + bioOff.x, row1Y - ph / 2 + bioOff.y, pw, ph + 2, 'module_3');
         }
 
         // 第二行：同步 ID
@@ -1417,20 +1458,23 @@
           const idX = baseInfoX + idOff.x;
           const idY = row2Y + idOff.y;
           const idFullText = `ID: ${um.userId || ''}`;
-          ctx.font = `600 22px ${FONT_SANS}`;
+          const idFs = this.getFontPx(state, 'user_id_row', 22);
+          ctx.font = `600 ${idFs}px ${FONT_SANS}`;
           ctx.fillStyle = '#c4b5fd';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
           ctx.fillText(idFullText, idX, idY);
-          this.registerHit('user_id_row', '個人卡片 ID', 'element', idX - 4, idY - 15, ctx.measureText(idFullText).width + 10, 30, 'module_3');
+          this.registerHit('user_id_row', '个人卡片 ID', 'element', idX - 4, idY - idFs * 0.65, ctx.measureText(idFullText).width + 10, Math.max(28, idFs * 1.3), 'module_3');
         }
 
-        // 第三行：地區位置 + 距離與在線狀態
+        // 第三行：地区位置 + 距离与在线状态
         let row3CurX = baseInfoX;
         const row3Y = cardY + 118;
 
         if (um.region && this.isVisible(state, 'user_region')) {
           const regOff = this.getOffset(state, 'user_region');
+          const regFs = this.getFontPx(state, 'user_region', 17);
+          const ph = Math.max(24, Math.round(regFs * 1.52));
           const regStr = `📍 ${um.region}`;
           const pw = this.drawSubtleGlassPill(
             ctx,
@@ -1438,21 +1482,24 @@
             row3CurX + regOff.x,
             row3Y + regOff.y,
             'rgba(255, 255, 255, 0.09)',
-            '#e2e8f0'
+            '#e2e8f0',
+            regFs
           );
-          this.registerHit('user_region', '地區位置標籤', 'element', row3CurX + regOff.x, row3Y - 14 + regOff.y, pw, 28, 'module_3');
+          this.registerHit('user_region', '地区位置标签', 'element', row3CurX + regOff.x, row3Y - ph / 2 + regOff.y, pw, ph + 2, 'module_3');
           row3CurX += pw + 10;
         }
 
         if (um.distance && this.isVisible(state, 'user_distance')) {
           const distOff = this.getOffset(state, 'user_distance');
+          const distFs = this.getFontPx(state, 'user_distance', 17);
+          const ph = Math.max(24, Math.round(distFs * 1.52));
           const dx = row3CurX + distOff.x;
           const dy = row3Y + distOff.y;
-          const pw = this.drawOnlineDistancePill(ctx, um.distance, dx, dy);
-          this.registerHit('user_distance', '距離與在線狀態', 'element', dx, dy - 14, pw, 28, 'module_3');
+          const pw = this.drawOnlineDistancePill(ctx, um.distance, dx, dy, distFs);
+          this.registerHit('user_distance', '距离与在线状态', 'element', dx, dy - ph / 2, pw, ph + 2, 'module_3');
         }
 
-        // 右側進入箭頭圓鈕
+        // 右侧进入箭头圆钮
         if (this.isVisible(state, 'user_go_arrow')) {
           const goOff = this.getOffset(state, 'user_go_arrow');
           const goX = cardX + cardW - 42 + goOff.x;
@@ -1470,7 +1517,7 @@
           ctx.lineTo(goX + 5, goY);
           ctx.lineTo(goX - 3, goY + 7);
           ctx.stroke();
-          this.registerHit('user_go_arrow', '卡片右側箭頭鈕', 'element', goX - 22, goY - 22, 44, 44, 'module_3');
+          this.registerHit('user_go_arrow', '卡片右侧箭头钮', 'element', goX - 22, goY - 22, 44, 44, 'module_3');
         }
       }
 
@@ -1480,18 +1527,20 @@
       }
     }
 
-    drawTagPill(ctx, text, x, centerY, c1, c2, textColor) {
+    drawTagPill(ctx, text, x, centerY, c1, c2, textColor, fontSize) {
+      const fs = fontSize || 17;
       ctx.save();
-      ctx.font = `700 17px ${FONT_SANS}`;
+      ctx.font = `700 ${fs}px ${FONT_SANS}`;
       const tw = ctx.measureText(text).width;
-      const pw = tw + 20;
-      const ph = 26;
+      const padH = Math.max(16, Math.round(fs * 1.15));
+      const pw = tw + padH;
+      const ph = Math.max(24, Math.round(fs * 1.52));
       const py = centerY - ph / 2;
       const g = ctx.createLinearGradient(x, py, x + pw, py + ph);
       g.addColorStop(0, c1);
       g.addColorStop(1, c2);
       ctx.fillStyle = g;
-      this.roundRect(ctx, x, py, pw, ph, 13);
+      this.roundRect(ctx, x, py, pw, ph, ph / 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(255,255,255,0.38)';
       ctx.lineWidth = 1;
@@ -1505,15 +1554,17 @@
       return pw;
     }
 
-    drawSubtleGlassPill(ctx, text, x, centerY, bgRgba, textColor) {
+    drawSubtleGlassPill(ctx, text, x, centerY, bgRgba, textColor, fontSize) {
+      const fs = fontSize || 17;
       ctx.save();
-      ctx.font = `500 17px ${FONT_SANS}`;
+      ctx.font = `500 ${fs}px ${FONT_SANS}`;
       const tw = ctx.measureText(text).width;
-      const pw = tw + 20;
-      const ph = 26;
+      const padX = Math.max(10, Math.round(fs * 0.58));
+      const pw = tw + padX * 2;
+      const ph = Math.max(24, Math.round(fs * 1.52));
       const py = centerY - ph / 2;
       ctx.fillStyle = bgRgba;
-      this.roundRect(ctx, x, py, pw, ph, 13);
+      this.roundRect(ctx, x, py, pw, ph, ph / 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(216, 180, 254, 0.22)';
       ctx.lineWidth = 1;
@@ -1522,35 +1573,38 @@
       ctx.fillStyle = textColor;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, x + 10, centerY + 1);
+      ctx.fillText(text, x + padX, centerY + 1);
       ctx.restore();
       return pw;
     }
 
-    drawOnlineDistancePill(ctx, text, x, centerY) {
+    drawOnlineDistancePill(ctx, text, x, centerY, fontSize) {
+      const fs = fontSize || 17;
       ctx.save();
-      ctx.font = `500 17px ${FONT_SANS}`;
+      ctx.font = `500 ${fs}px ${FONT_SANS}`;
       const tw = ctx.measureText(text).width;
-      const pw = tw + 32;
-      const ph = 26;
+      const dotR = Math.max(3.6, fs * 0.24);
+      const leadX = Math.round(dotR * 2 + 15);
+      const pw = tw + leadX + Math.max(10, Math.round(fs * 0.55));
+      const ph = Math.max(24, Math.round(fs * 1.52));
       const py = centerY - ph / 2;
       ctx.fillStyle = 'rgba(16, 185, 129, 0.14)';
-      this.roundRect(ctx, x, py, pw, ph, 13);
+      this.roundRect(ctx, x, py, pw, ph, ph / 2);
       ctx.fill();
       ctx.strokeStyle = 'rgba(52, 211, 153, 0.35)';
       ctx.lineWidth = 1;
       ctx.stroke();
 
-      // 翠綠在線呼吸小圓點
+      // 翠绿在线呼吸小圆点
       ctx.fillStyle = '#34d399';
       ctx.beginPath();
-      ctx.arc(x + 13, centerY, 4.2, 0, Math.PI * 2);
+      ctx.arc(x + Math.round(leadX * 0.52), centerY, dotR, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.fillStyle = '#d1fae5';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, x + 23, centerY + 1);
+      ctx.fillText(text, x + leadX, centerY + 1);
       ctx.restore();
       return pw;
     }
@@ -1651,7 +1705,7 @@
             ctx.fill();
           }
 
-          this.registerHit(badgeKey, `卡片 ${idx + 1} 播放角標`, 'element', pbX - 22, pbY - 22, 44, 44, 'module_4');
+          this.registerHit(badgeKey, `卡片 ${idx + 1} 播放角标`, 'element', pbX - 22, pbY - 22, 44, 44, 'module_4');
           this.playButtons.push({
             cardId: card.id,
             isVideo,
@@ -1667,11 +1721,12 @@
           });
         }
 
-        // 畫面大標題（可單獨隱藏/刪除/移動）
+        // 画面大标题（可单独调整字号/隐藏/删除/移动）
         const titleKey = `card_title_${card.id}`;
         if (card.overlayTitle && this.isVisible(state, titleKey)) {
           const tOff = this.getOffset(state, titleKey);
-          const fontSize = Number(fm.titleFontSize) || 38;
+          const fontSize = this.getFontPx(state, titleKey, Number(fm.titleFontSize) || 38);
+          const strokeW = Math.max(5, Math.round(fontSize * 0.24 * 10) / 10);
           const lineH = Math.round(fontSize * 1.24);
           const lines = String(card.overlayTitle).split('\n');
           const startTY = cy + 80 + tOff.y;
@@ -1680,13 +1735,13 @@
           if (!useUneditedOrig) {
             lines.forEach((line, lIdx) => {
               const ly = startTY + lIdx * lineH;
-              this.drawStrokedRichLine(ctx, line, centerTX, ly, fontSize, 900, 9, '#ffffff', '#f43f5e');
+              this.drawStrokedRichLine(ctx, line, centerTX, ly, fontSize, 900, strokeW, '#ffffff', '#f43f5e');
             });
           }
 
           this.registerHit(
             titleKey,
-            `卡片 ${idx + 1} 標題`,
+            `卡片 ${idx + 1} 标题`,
             'element',
             centerTX - colW * 0.44,
             startTY - fontSize * 0.6,
@@ -1696,11 +1751,12 @@
           );
         }
 
-        // 畫面下方字幕（可單獨隱藏/刪除/移動）
+        // 画面下方字幕（可单独调整字号/隐藏/删除/移动）
         const subKey = `card_sub_${card.id}`;
         if (card.overlaySubtitle && this.isVisible(state, subKey)) {
           const subOff = this.getOffset(state, subKey);
-          const subSize = Number(fm.subtitleFontSize) || 24;
+          const subSize = this.getFontPx(state, subKey, Number(fm.subtitleFontSize) || 24);
+          const subStroke = Math.max(4, Math.round(subSize * 0.27 * 10) / 10);
           const subLines = String(card.overlaySubtitle).split('\n');
           const lineH = Math.round(subSize * 1.28);
           const baseSubY = cy + mediaH - 42 - (subLines.length - 1) * lineH + subOff.y;
@@ -1715,7 +1771,7 @@
                 baseSubY + sIdx * lineH,
                 subSize,
                 700,
-                6.5,
+                subStroke,
                 '#f8fafc',
                 '#fbbf24'
               );
@@ -1734,9 +1790,9 @@
           );
         }
 
-        // 卡片底部兩行結構：
-        // 第1行：帖子標題摘要
-        // 第2行：左側【同步上方用戶頭像 + 暱稱】（證明是該用戶發佈） + 右側【愛心點讚數】
+        // 卡片底部两行结构：
+        // 第1行：帖子标题摘要
+        // 第2行：左侧【同步上方用户头像 + 昵称】 + 右侧【爱心点赞数】
         const footerY = cy + mediaH;
         if (!isFullTrans) {
           const fBg = ctx.createLinearGradient(cx, footerY, cx, footerY + footerH);
@@ -1749,17 +1805,18 @@
           ctx.fillRect(cx, footerY, colW, 1);
         }
 
-        // 底部第1行：標題摘要
+        // 底部第1行：标题摘要
         const ftKey = `card_ft_${card.id}`;
         if (fm.showFooterTitle && this.isVisible(state, ftKey)) {
           const ftOff = this.getOffset(state, ftKey);
+          const ftFs = this.getFontPx(state, ftKey, 20);
           const rawFooter =
             card.footerTitle || String(card.overlayTitle || '').replace(/\n+/g, ' ').replace(/\*/g, '');
           const ftX = cx + 16 + ftOff.x;
           const ftY = footerY + 26 + ftOff.y;
           const availW = colW - 32;
 
-          ctx.font = `600 20px ${FONT_SANS}`;
+          ctx.font = `600 ${ftFs}px ${FONT_SANS}`;
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
           const shortTitle = this.truncateText(ctx, rawFooter, availW);
@@ -1767,53 +1824,57 @@
 
           this.registerHit(
             ftKey,
-            `卡片 ${idx + 1} 底部標題`,
+            `卡片 ${idx + 1} 底部标题`,
             'element',
             ftX - 4,
-            ftY - 14,
+            ftY - ftFs * 0.65,
             Math.min(availW, ctx.measureText(shortTitle).width + 10),
-            28,
+            Math.max(26, ftFs * 1.3),
             'module_4'
           );
         }
 
         const botRowCY = fm.showFooterTitle && this.isVisible(state, ftKey) ? footerY + 66 : footerY + footerH / 2;
 
-        // 底部第2行右側：愛心點讚膠囊
+        // 底部第2行右侧：爱心点赞胶囊
         let rightLimitX = cx + colW - 14;
         const likeKey = `card_likes_${card.id}`;
         if (this.isVisible(state, likeKey)) {
           const likeOff = this.getOffset(state, likeKey);
+          const likeFs = this.getFontPx(state, likeKey, 18);
           const likeStr = String(card.likes || '0');
-          ctx.font = `600 18px ${FONT_SANS}`;
+          ctx.font = `600 ${likeFs}px ${FONT_SANS}`;
           const likeTW = ctx.measureText(likeStr).width;
-          const pillW = likeTW + 40;
-          const pillH = 28;
+          const heartSize = Math.max(6, likeFs * 0.39);
+          const textLead = Math.round(heartSize * 2 + 14);
+          const pillW = likeTW + textLead + Math.max(10, Math.round(likeFs * 0.65));
+          const pillH = Math.max(26, Math.round(likeFs * 1.56));
           const pillX = cx + colW - 14 - pillW + likeOff.x;
           const pillY = botRowCY - pillH / 2 + likeOff.y;
 
           ctx.fillStyle = 'rgba(168, 85, 247, 0.14)';
-          this.roundRect(ctx, pillX, pillY, pillW, pillH, 14);
+          this.roundRect(ctx, pillX, pillY, pillW, pillH, pillH / 2);
           ctx.fill();
 
-          this.drawHeartOutline(ctx, pillX + 15, botRowCY + likeOff.y, 7, '#f472b6');
+          this.drawHeartOutline(ctx, pillX + Math.round(textLead * 0.54), botRowCY + likeOff.y, heartSize, '#f472b6');
 
           ctx.fillStyle = '#e9d5ff';
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
-          ctx.fillText(likeStr, pillX + 28, botRowCY + likeOff.y + 1);
+          ctx.fillText(likeStr, pillX + textLead, botRowCY + likeOff.y + 1);
 
-          this.registerHit(likeKey, `卡片 ${idx + 1} 點讚數`, 'element', pillX, pillY, pillW, pillH, 'module_4');
+          this.registerHit(likeKey, `卡片 ${idx + 1} 点赞数`, 'element', pillX, pillY, pillW, pillH, 'module_4');
           rightLimitX = pillX - 10;
         }
 
-        // 底部第2行左側：與上方個人卡片實時同步的【圓形小頭像 + 暱稱】
+        // 底部第2行左侧：与上方个人卡片实时同步的【圆形小头像 + 昵称】
         const authorKey = `card_author_${card.id}`;
         if (fm.syncAuthorFromUser !== false && this.isVisible(state, authorKey)) {
           const auOff = this.getOffset(state, authorKey);
+          const auFs = this.getFontPx(state, authorKey, 18);
           const auX = cx + 16 + auOff.x;
           const auY = botRowCY + auOff.y;
-          const miniAv = 28;
+          const miniAv = Math.max(24, Math.round(auFs * 1.55));
 
           if (syncedAvatar) {
             ctx.save();
@@ -1834,14 +1895,14 @@
 
           const nameStartX = auX + miniAv + 9;
           const maxAuthorW = Math.max(60, rightLimitX - nameStartX);
-          ctx.font = `500 18px ${FONT_SANS}`;
+          ctx.font = `500 ${auFs}px ${FONT_SANS}`;
           ctx.textAlign = 'left';
           ctx.textBaseline = 'middle';
           const shortNick = this.truncateText(ctx, syncedNickname, maxAuthorW);
           this.fillReadableText(ctx, shortNick, nameStartX, auY + 1, '#b8b2d1', isFullTrans);
 
           const totalAuW = miniAv + 9 + ctx.measureText(shortNick).width + 6;
-          this.registerHit(authorKey, `卡片 ${idx + 1} 同步頭像暱稱`, 'element', auX - 2, auY - 16, totalAuW, 32, 'module_4');
+          this.registerHit(authorKey, `卡片 ${idx + 1} 同步头像昵称`, 'element', auX - 2, auY - Math.max(16, auFs * 0.8), totalAuW, Math.max(32, auFs * 1.6), 'module_4');
         }
 
         ctx.restore();
@@ -1849,7 +1910,7 @@
           this.drawGlassCardRim(ctx, cx, cy, colW, cardH, radius);
         }
 
-        this.registerHit(cardHitKey, `視頻卡片 ${idx + 1}`, 'element', cx, cy, colW, cardH, 'module_4');
+        this.registerHit(cardHitKey, `视频卡片 ${idx + 1}`, 'element', cx, cy, colW, cardH, 'module_4');
       });
 
       ctx.restore();
@@ -1928,7 +1989,15 @@
           b.key === 'nav_top_search' ||
           b.key === 'user_avatar' ||
           b.key.startsWith('feed_card_');
-        const hintSuffix = b.kind === 'module' ? ' · 按住拖动' : isUploadable ? ' · 点击上传图片/视频' : ' · 点击直接编辑';
+        const isTextEl = Boolean(global.LayaDefaults && global.LayaDefaults.getTextElementMeta(null, b.key));
+        const hintSuffix =
+          b.kind === 'module'
+            ? ' · 按住拖动'
+            : isUploadable
+            ? ' · 点击上传图片/视频'
+            : isTextEl
+            ? ' · 点击改字/单独调大小'
+            : ' · 按住拖动/可隐藏';
         this.drawGizmoTag(octx, `${b.label}${hintSuffix}`, b.x, tagY, 'rgba(109, 40, 217, 0.92)');
         octx.restore();
       }

@@ -70,7 +70,13 @@
         </div>
 
         <div class="stage-tool-group">
-          <span style="color:#a78bfa;">💾 修改与上传内容已自动保存</span>
+          <span>全画布字号：</span>
+          <div class="zoom-ctrl">
+            <button type="button" id="btnGlobalFontDown" title="全部文字统一缩小">A−</button>
+            <span id="globalFontScaleTopLabel">100%</span>
+            <button type="button" id="btnGlobalFontUp" title="全部文字统一放大">A+</button>
+            <button type="button" id="btnGlobalFontResetTop" title="恢复全部默认字号">复位</button>
+          </div>
           <span>缩放：</span>
           <div class="zoom-ctrl">
             <button type="button" id="btnZoomOut" title="缩小">−</button>
@@ -88,16 +94,21 @@
         </div>
       </div>
 
-      <!-- 底部选中元素位置与删除状态浮条 -->
+      <!-- 底部选中元素位置、单独字号与删除状态浮条 -->
       <div id="selectedGizmoBar" class="selected-gizmo-bar hidden">
         <span id="selectedGizmoName">已选中元素</span>
+        <div id="selectedGizmoFontGroup" class="gizmo-font-group hidden">
+          <button type="button" id="btnSelFontDown" class="font-step-btn" title="缩小此文字">A−</button>
+          <span id="selectedGizmoFontVal" class="val-pill">28px</span>
+          <button type="button" id="btnSelFontUp" class="font-step-btn" title="放大此文字">A+</button>
+        </div>
         <button type="button" id="btnResetSelectedOffset" class="btn-dark-sm">↺ 复位位置</button>
         <button type="button" id="btnHideSelectedEl" class="btn-icon-danger" style="padding:5px 10px;font-size:12px;">
           🗑️ 隐藏/删除此元素 (Del)
         </button>
       </div>
 
-      <!-- 画布直接点击就地编辑浮窗 + 隐藏直传文件选择器 -->
+      <!-- 画布直接点击就地编辑浮窗（同时支持直接改字与单独调字号） + 隐藏直传文件选择器 -->
       <div id="canvasInlineEditor" class="canvas-inline-editor hidden">
         <div class="inline-editor-head">
           <span id="inlineEditorTitle">✏️ 直接编辑文字</span>
@@ -105,6 +116,18 @@
         </div>
         <input type="text" id="inlineEditorInput" class="ctrl-input" />
         <textarea id="inlineEditorTextarea" class="ctrl-textarea hidden" rows="2"></textarea>
+        <div id="inlineFontSizeBox" class="inline-fontsize-box hidden">
+          <div class="inline-fontsize-head">
+            <span>🔠 单独调整此文字大小</span>
+            <span id="inlineFontBadge" class="val-pill">28px</span>
+          </div>
+          <div class="font-scale-bar">
+            <button type="button" id="btnInlineFontDown" class="font-step-btn">A−</button>
+            <input type="range" id="inlineFontRange" min="12" max="72" value="28" />
+            <button type="button" id="btnInlineFontUp" class="font-step-btn">A+</button>
+            <button type="button" id="btnInlineFontReset" class="btn-dark-sm" style="padding:4px 7px;font-size:11px;">默认</button>
+          </div>
+        </div>
         <div id="inlineEditorExtraActions" class="inline-editor-actions"></div>
       </div>
       <input type="file" id="directCanvasFilePicker" hidden />
@@ -145,6 +168,31 @@
           <button type="button" class="pill-radio" data-theme-btn="transparent">🏁 透明背景</button>
           <button type="button" class="pill-radio" data-theme-btn="full-transparent">✨ 全透明无框</button>
         </div>
+
+        <hr class="sub-divider" />
+        <div class="ai-box-head">
+          <span>🔠 文字大小调节（统一缩放 ＆ 单项独立调字号）</span>
+          <button type="button" id="btnResetAllFontSizes" class="btn-dark-sm" style="padding:3px 8px;font-size:11px;">
+            ↺ 恢复默认字号
+          </button>
+        </div>
+        <div class="field-group">
+          <label class="field-label">
+            <span>全部文字统一缩放比例</span>
+            <span class="val-pill"><span data-val-for="layout.globalFontScale">100</span>%</span>
+          </label>
+          <div class="font-scale-bar">
+            <button type="button" id="btnPanelGlobalFontDown" class="font-step-btn">A−</button>
+            <input type="range" min="50" max="180" step="2" data-bind="layout.globalFontScale" />
+            <button type="button" id="btnPanelGlobalFontUp" class="font-step-btn">A+</button>
+          </div>
+        </div>
+        <details id="perTextFontDrawer" class="per-text-font-drawer">
+          <summary>
+            <span>🎛️ 单独调整每一处文字大小（也可直接点击画布文字调）</span>
+          </summary>
+          <div id="perTextFontList" class="per-text-font-list"></div>
+        </details>
 
         <hr class="sub-divider" />
         <div class="ai-box-head">

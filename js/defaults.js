@@ -33,6 +33,7 @@
       layout: {
         canvasTheme: 'dark',
         enableAnim: true,
+        globalFontScale: 100,
         bgColor: '#080611',
         borderColor: '#2a2342',
         cardRadius: 20,
@@ -181,7 +182,10 @@
       offsets: {},
 
       // 全页面任意元素隐藏/删除状态表 { [key]: labelString }
-      hiddenElements: {}
+      hiddenElements: {},
+
+      // 全页面任意文字独立字号表 { [key]: numberPx }
+      fontSizes: {}
     };
   }
 
@@ -213,6 +217,15 @@
     if (!card || card.mediaType !== 'default') return false;
     // 若用户切换为了繁体模式，改用去字底图并实时绘制繁体标题与字幕
     if (state.posterLang === 'zh-TW') return false;
+    // 若全局字号缩放、统一卡片字号或当前卡片独立字号被调整过，切换为去字底图以实时渲染新字号
+    const gScale = Number(state.layout && state.layout.globalFontScale) || 100;
+    if (gScale !== 100) return false;
+    if (state.feedModule) {
+      if ((Number(state.feedModule.titleFontSize) || 38) !== 38) return false;
+      if ((Number(state.feedModule.subtitleFontSize) || 24) !== 24) return false;
+    }
+    const fz = state.fontSizes || {};
+    if (fz[`card_title_${card.id}`] || fz[`card_sub_${card.id}`]) return false;
     const hid = state.hiddenElements || {};
     if (
       hid[`card_title_${card.id}`] ||
@@ -318,6 +331,165 @@
     });
   }
 
+  /**
+   * 获取指定文字元素的默认基础字号与区间元数据（同时支持固定文字项、导航项与动态视频卡片文字项）
+   */
+  const STATIC_TEXT_META = {
+    step_title_1: { label: '步骤 1 标题', group: '① 步骤与状态栏', min: 22, max: 72, getDef: (s) => Number(s.steps && s.steps.fontSize) || 40 },
+    step_title_2: { label: '步骤 2 标题', group: '① 步骤与状态栏', min: 22, max: 72, getDef: (s) => Number(s.steps && s.steps.fontSize) || 40 },
+    step_title_3: { label: '步骤 3 标题', group: '① 步骤与状态栏', min: 22, max: 72, getDef: (s) => Number(s.steps && s.steps.fontSize) || 40 },
+    sb_time: { label: '状态栏时间', group: '① 步骤与状态栏', min: 14, max: 38, getDef: () => 22 },
+    play_header: { label: 'Google Play 顶栏标题', group: '② 商店应用卡', min: 18, max: 52, getDef: () => 30 },
+    play_title: { label: '商店应用名称', group: '② 商店应用卡', min: 16, max: 48, getDef: () => 28 },
+    play_meta: { label: '商店公司名称', group: '② 商店应用卡', min: 14, max: 40, getDef: () => 22 },
+    play_install: { label: '安装按钮文字', group: '② 商店应用卡', min: 16, max: 44, getDef: () => 26 },
+    play_inapp: { label: '包含内购小字', group: '② 商店应用卡', min: 11, max: 30, getDef: () => 16 },
+    play_stats: { label: '评分/大小/分级说明文字', group: '② 商店应用卡', min: 12, max: 34, getDef: () => 19 },
+    play_stats_num: { label: '评分大数字（4.8）', group: '② 商店应用卡', min: 16, max: 44, getDef: () => 26 },
+    user_search_box: { label: '搜索框输入文字', group: '④ 搜索与个人卡', min: 18, max: 52, getDef: () => 30 },
+    user_cancel_btn: { label: '搜索框右侧「取消」', group: '④ 搜索与个人卡', min: 16, max: 46, getDef: () => 27 },
+    user_section_label: { label: '「用户」分组小标题', group: '④ 搜索与个人卡', min: 14, max: 42, getDef: () => 23 },
+    user_nickname: { label: '个人卡片用户昵称', group: '④ 搜索与个人卡', min: 18, max: 50, getDef: () => 29 },
+    user_age_badge: { label: '年龄性别徽章文字', group: '④ 搜索与个人卡', min: 12, max: 32, getDef: () => 17 },
+    user_level_badge: { label: '等级徽章文字', group: '④ 搜索与个人卡', min: 12, max: 32, getDef: () => 17 },
+    user_bio_tag: { label: '声音个性标签文字', group: '④ 搜索与个人卡', min: 12, max: 32, getDef: () => 17 },
+    user_id_row: { label: '个人卡片 ID 文字', group: '④ 搜索与个人卡', min: 14, max: 40, getDef: () => 22 },
+    user_region: { label: '地区位置标签文字', group: '④ 搜索与个人卡', min: 12, max: 32, getDef: () => 17 },
+    user_distance: { label: '距离与在线状态文字', group: '④ 搜索与个人卡', min: 12, max: 32, getDef: () => 17 }
+  };
+
+  function getTextElementMeta(state, key) {
+    if (!key) return null;
+    if (STATIC_TEXT_META[key]) {
+      const m = STATIC_TEXT_META[key];
+      return {
+        key,
+        label: m.label,
+        group: m.group,
+        min: m.min,
+        max: m.max,
+        defaultSize: m.getDef(state || {})
+      };
+    }
+    if (key.startsWith('top_tab_')) {
+      const idx = Number(key.slice('top_tab_'.length));
+      const isAct = state && state.navModule && Number(state.navModule.activeTopIndex) === idx;
+      const tabName = (state && state.navModule && state.navModule.topTabs && state.navModule.topTabs[idx]) || `标签 ${idx + 1}`;
+      return {
+        key,
+        label: `顶部标签「${tabName}」`,
+        group: '③ 标签与底部导航',
+        min: 18,
+        max: 64,
+        defaultSize: isAct ? 40 : 33
+      };
+    }
+    if (key.startsWith('bot_nav_')) {
+      const idx = Number(key.slice('bot_nav_'.length));
+      const navItem = state && state.navModule && state.navModule.bottomTabs && state.navModule.bottomTabs[idx];
+      return {
+        key,
+        label: `底部导航「${(navItem && navItem.label) || idx + 1}」`,
+        group: '③ 标签与底部导航',
+        min: 13,
+        max: 38,
+        defaultSize: 22
+      };
+    }
+    const cardMatch = key.match(/^card_(title|sub|ft|likes|author)_(.+)$/);
+    if (cardMatch) {
+      const kind = cardMatch[1];
+      const cardId = cardMatch[2];
+      const cards = (state && state.feedModule && state.feedModule.cards) || [];
+      const idx = cards.findIndex((c) => c.id === cardId);
+      const tag = idx >= 0 ? `卡片 ${idx + 1}` : '卡片';
+      if (kind === 'title') {
+        return {
+          key,
+          label: `${tag} 画面大标题`,
+          group: '⑤ 视频卡片流',
+          min: 18,
+          max: 72,
+          defaultSize: Number(state && state.feedModule && state.feedModule.titleFontSize) || 38
+        };
+      }
+      if (kind === 'sub') {
+        return {
+          key,
+          label: `${tag} 画面下方字幕`,
+          group: '⑤ 视频卡片流',
+          min: 14,
+          max: 48,
+          defaultSize: Number(state && state.feedModule && state.feedModule.subtitleFontSize) || 24
+        };
+      }
+      if (kind === 'ft') {
+        return {
+          key,
+          label: `${tag} 底栏标题摘要`,
+          group: '⑤ 视频卡片流',
+          min: 13,
+          max: 38,
+          defaultSize: 20
+        };
+      }
+      if (kind === 'author') {
+        return {
+          key,
+          label: `${tag} 同步作者昵称`,
+          group: '⑤ 视频卡片流',
+          min: 12,
+          max: 34,
+          defaultSize: 18
+        };
+      }
+      if (kind === 'likes') {
+        return {
+          key,
+          label: `${tag} 点赞数字`,
+          group: '⑤ 视频卡片流',
+          min: 12,
+          max: 34,
+          defaultSize: 18
+        };
+      }
+    }
+    return null;
+  }
+
+  function getBaseFontSize(state, key, fallbackPx) {
+    if (state && state.fontSizes && Number(state.fontSizes[key]) > 0) {
+      return Number(state.fontSizes[key]);
+    }
+    const meta = getTextElementMeta(state, key);
+    if (meta) return meta.defaultSize;
+    return Number(fallbackPx) || 20;
+  }
+
+  function getEffectiveFontSize(state, key, fallbackPx) {
+    const base = getBaseFontSize(state, key, fallbackPx);
+    const scale = (Number(state && state.layout && state.layout.globalFontScale) || 100) / 100;
+    return Math.max(9, Math.round(base * scale * 10) / 10);
+  }
+
+  function listAllTextItems(state) {
+    const items = [];
+    Object.keys(STATIC_TEXT_META).forEach((k) => {
+      items.push(getTextElementMeta(state, k));
+    });
+    const topTabs = (state && state.navModule && state.navModule.topTabs) || [];
+    topTabs.forEach((_, idx) => items.push(getTextElementMeta(state, `top_tab_${idx}`)));
+    const botTabs = (state && state.navModule && state.navModule.bottomTabs) || [];
+    botTabs.forEach((_, idx) => items.push(getTextElementMeta(state, `bot_nav_${idx}`)));
+    const cards = (state && state.feedModule && state.feedModule.cards) || [];
+    cards.forEach((c) => {
+      ['title', 'sub', 'ft', 'author', 'likes'].forEach((kind) => {
+        items.push(getTextElementMeta(state, `card_${kind}_${c.id}`));
+      });
+    });
+    return items.filter(Boolean);
+  }
+
   global.LayaDefaults = {
     STAGE_WIDTH,
     STAGE_HEIGHT,
@@ -326,6 +498,10 @@
     createRawImageMap,
     isCardUneditedDefault,
     randomizeUserProfile,
-    randomizeStatusBar
+    randomizeStatusBar,
+    getTextElementMeta,
+    getBaseFontSize,
+    getEffectiveFontSize,
+    listAllTextItems
   };
 })(window);

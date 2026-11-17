@@ -26,6 +26,7 @@
   let zoomMode = 'fit';
   let currentExportAbort = null;
   let activeInlineHandler = null;
+  let activeInlineFontKey = null;
   let pendingDirectFileCallback = null;
 
   function persistState() {
@@ -118,9 +119,11 @@
     syncStaticInputsFromState();
     syncStageTransparencyClass();
     syncPosterLangButtons();
+    syncGlobalFontScaleLabels();
     renderHiddenElementsManager();
     renderDynamicNavControls();
     renderDynamicFeedCards();
+    renderPerTextFontList();
     updateExportModeHint();
     fitStageToViewport();
 
@@ -215,6 +218,7 @@
     syncStaticInputsFromState();
     renderDynamicNavControls();
     renderDynamicFeedCards();
+    renderPerTextFontList();
     persistState();
     showToast(
       toTrad
@@ -307,6 +311,35 @@
       zoomMode = 'fit';
       fitStageToViewport();
     });
+
+    // 顶部画布工具条与右侧面板的「全部文字统一缩放」快捷按钮
+    const stepGlobalFont = (delta) => {
+      const cur = Number(state.layout.globalFontScale) || 100;
+      setGlobalFontScale(Math.max(50, Math.min(180, cur + delta)));
+    };
+    document.getElementById('btnGlobalFontDown').addEventListener('click', () => stepGlobalFont(-6));
+    document.getElementById('btnGlobalFontUp').addEventListener('click', () => stepGlobalFont(6));
+    document.getElementById('btnPanelGlobalFontDown').addEventListener('click', () => stepGlobalFont(-6));
+    document.getElementById('btnPanelGlobalFontUp').addEventListener('click', () => stepGlobalFont(6));
+
+    const handleResetAllFonts = () => {
+      resetAllFontSizes();
+      showToast('↺ 已恢复全画布默认字号与 100% 缩放比例');
+    };
+    document.getElementById('btnGlobalFontResetTop').addEventListener('click', handleResetAllFonts);
+    document.getElementById('btnResetAllFontSizes').addEventListener('click', handleResetAllFonts);
+
+    // 底部选中元素浮条的「单独调整选中文字大小」按钮
+    const stepSelectedFont = (delta) => {
+      const sel = interaction && interaction.uiState.selectedBox;
+      if (!sel) return;
+      const meta = global.LayaDefaults.getTextElementMeta(state, sel.key);
+      if (!meta) return;
+      const curBase = global.LayaDefaults.getBaseFontSize(state, sel.key, meta.defaultSize);
+      setIndividualFontSize(sel.key, curBase + delta);
+    };
+    document.getElementById('btnSelFontDown').addEventListener('click', () => stepSelectedFont(-2));
+    document.getElementById('btnSelFontUp').addEventListener('click', () => stepSelectedFont(2));
 
     const selDragScope = document.getElementById('selDragScope');
     selDragScope.addEventListener('change', () => {
@@ -477,18 +510,128 @@
       syncStaticInputsFromState();
       syncStageTransparencyClass();
       syncPosterLangButtons();
+      syncGlobalFontScaleLabels();
       renderHiddenElementsManager();
       renderDynamicNavControls();
       renderDynamicFeedCards();
+      renderPerTextFontList();
       updateSelectedElementBar();
       updateExportModeHint();
       showToast('已清空缓存并恢复全部默认设置');
     });
   }
 
+  function syncGlobalFontScaleLabels() {
+    const pct = Number(state.layout.globalFontScale) || 100;
+    const topLbl = document.getElementById('globalFontScaleTopLabel');
+    if (topLbl) topLbl.textContent = `${pct}%`;
+    const valBadge = document.querySelector('[data-val-for="layout.globalFontScale"]');
+    if (valBadge) valBadge.textContent = pct;
+    const rangeInp = document.querySelector('[data-bind="layout.globalFontScale"]');
+    if (rangeInp) rangeInp.value = pct;
+  }
+
+  function setGlobalFontScale(nextPct) {
+    const clamped = Math.max(50, Math.min(180, Math.round(Number(nextPct) || 100)));
+    state.layout.globalFontScale = clamped;
+    syncGlobalFontScaleLabels();
+    updateSelectedElementBar();
+    refreshInlineFontBoxUI();
+    renderPerTextFontList();
+    persistState();
+  }
+
+  function setIndividualFontSize(key, nextPx) {
+    const meta = global.LayaDefaults.getTextElementMeta(state, key);
+    if (!meta) return;
+    if (!state.fontSizes) state.fontSizes = {};
+    const clamped = Math.max(meta.min, Math.min(meta.max, Math.round(Number(nextPx) || meta.defaultSize)));
+    state.fontSizes[key] = clamped;
+    updateSelectedElementBar();
+    refreshInlineFontBoxUI();
+    renderPerTextFontList();
+    persistState();
+  }
+
+  function resetIndividualFontSize(key) {
+    if (state.fontSizes && state.fontSizes[key] !== undefined) {
+      delete state.fontSizes[key];
+      updateSelectedElementBar();
+      refreshInlineFontBoxUI();
+      renderPerTextFontList();
+      persistState();
+    }
+  }
+
+  function resetAllFontSizes() {
+    state.layout.globalFontScale = 100;
+    state.steps.fontSize = 40;
+    state.feedModule.titleFontSize = 38;
+    state.feedModule.subtitleFontSize = 24;
+    state.fontSizes = {};
+    syncStaticInputsFromState();
+    syncGlobalFontScaleLabels();
+    updateSelectedElementBar();
+    refreshInlineFontBoxUI();
+    renderPerTextFontList();
+    persistState();
+  }
+
+  function renderPerTextFontList() {
+    const container = document.getElementById('perTextFontList');
+    if (!container || !global.LayaDefaults.listAllTextItems) return;
+    const items = global.LayaDefaults.listAllTextItems(state);
+    container.innerHTML = '';
+
+    let lastGroup = '';
+    items.forEach((meta) => {
+      if (meta.group !== lastGroup) {
+        lastGroup = meta.group;
+        const gTitle = document.createElement('div');
+        gTitle.className = 'per-text-group-title';
+        gTitle.textContent = meta.group;
+        container.appendChild(gTitle);
+      }
+
+      const isCustom = Boolean(state.fontSizes && state.fontSizes[meta.key] !== undefined);
+      const basePx = global.LayaDefaults.getBaseFontSize(state, meta.key, meta.defaultSize);
+      const effPx = Math.round(global.LayaDefaults.getEffectiveFontSize(state, meta.key, meta.defaultSize));
+
+      const row = document.createElement('div');
+      row.className = `per-text-row ${isCustom ? 'is-custom' : ''}`;
+      row.innerHTML = `
+        <span class="pt-label" title="${escapeHtml(meta.label)}">${escapeHtml(meta.label)}</span>
+        <input type="range" min="${meta.min}" max="${meta.max}" value="${basePx}" />
+        <span class="val-pill">${effPx}px</span>
+        <button type="button" class="mini-clear-btn" style="padding:2px 6px;font-size:11px;" title="恢复此项默认字号">↺</button>
+      `;
+
+      const slider = row.querySelector('input[type="range"]');
+      const pill = row.querySelector('.val-pill');
+      slider.addEventListener('input', () => {
+        const v = Number(slider.value);
+        if (!state.fontSizes) state.fontSizes = {};
+        state.fontSizes[meta.key] = v;
+        row.classList.add('is-custom');
+        pill.textContent = `${Math.round(global.LayaDefaults.getEffectiveFontSize(state, meta.key, meta.defaultSize))}px`;
+        updateSelectedElementBar();
+        refreshInlineFontBoxUI();
+        persistState();
+      });
+
+      row.querySelector('.mini-clear-btn').addEventListener('click', () => {
+        resetIndividualFontSize(meta.key);
+      });
+
+      container.appendChild(row);
+    });
+  }
+
   function updateSelectedElementBar() {
     const bar = document.getElementById('selectedGizmoBar');
     const txt = document.getElementById('selectedGizmoName');
+    const fontGroup = document.getElementById('selectedGizmoFontGroup');
+    const fontVal = document.getElementById('selectedGizmoFontVal');
     const sel = interaction && interaction.uiState.selectedBox;
     if (!sel) {
       bar.classList.add('hidden');
@@ -499,6 +642,17 @@
     txt.textContent = `已选中：${sel.label} (${off.x >= 0 ? '+' : ''}${off.x}, ${
       off.y >= 0 ? '+' : ''
     }${off.y})`;
+
+    const meta = global.LayaDefaults.getTextElementMeta(state, sel.key);
+    if (fontGroup && fontVal) {
+      if (meta) {
+        fontGroup.classList.remove('hidden');
+        const eff = Math.round(global.LayaDefaults.getEffectiveFontSize(state, sel.key, meta.defaultSize));
+        fontVal.textContent = `${eff}px`;
+      } else {
+        fontGroup.classList.add('hidden');
+      }
+    }
   }
 
   // ===========================================================================
@@ -571,6 +725,32 @@
 
         if (path === 'layout.canvasTheme') {
           syncStageTransparencyClass();
+        } else if (path === 'layout.globalFontScale') {
+          syncGlobalFontScaleLabels();
+          updateSelectedElementBar();
+          refreshInlineFontBoxUI();
+          renderPerTextFontList();
+        } else if (path === 'steps.fontSize') {
+          if (state.fontSizes) {
+            delete state.fontSizes.step_title_1;
+            delete state.fontSizes.step_title_2;
+            delete state.fontSizes.step_title_3;
+          }
+          renderPerTextFontList();
+        } else if (path === 'feedModule.titleFontSize') {
+          if (state.fontSizes) {
+            Object.keys(state.fontSizes).forEach((k) => {
+              if (k.startsWith('card_title_')) delete state.fontSizes[k];
+            });
+          }
+          renderPerTextFontList();
+        } else if (path === 'feedModule.subtitleFontSize') {
+          if (state.fontSizes) {
+            Object.keys(state.fontSizes).forEach((k) => {
+              if (k.startsWith('card_sub_')) delete state.fontSizes[k];
+            });
+          }
+          renderPerTextFontList();
         }
 
         if (path === 'userModule.searchQuery' || path === 'userModule.userId') {
@@ -717,6 +897,7 @@
       };
       state.feedModule.cards.push(newCard);
       renderDynamicFeedCards();
+      renderPerTextFontList();
       persistState();
       showToast(`已新增卡片 ${nextIdx}`);
     });
@@ -1077,6 +1258,7 @@
           removePersistedMedia(`cardMedia:${card.id}`);
           state.feedModule.cards.splice(idx, 1);
           renderDynamicFeedCards();
+          renderPerTextFontList();
           updateExportModeHint();
           persistState();
         });
@@ -1232,6 +1414,44 @@
       });
     }
 
+    const fRange = document.getElementById('inlineFontRange');
+    const fDown = document.getElementById('btnInlineFontDown');
+    const fUp = document.getElementById('btnInlineFontUp');
+    const fReset = document.getElementById('btnInlineFontReset');
+
+    if (fRange) {
+      fRange.addEventListener('input', () => {
+        if (activeInlineFontKey) {
+          setIndividualFontSize(activeInlineFontKey, Number(fRange.value));
+        }
+      });
+    }
+    if (fDown) {
+      fDown.addEventListener('click', () => {
+        if (!activeInlineFontKey) return;
+        const meta = global.LayaDefaults.getTextElementMeta(state, activeInlineFontKey);
+        if (!meta) return;
+        const cur = global.LayaDefaults.getBaseFontSize(state, activeInlineFontKey, meta.defaultSize);
+        setIndividualFontSize(activeInlineFontKey, cur - 2);
+      });
+    }
+    if (fUp) {
+      fUp.addEventListener('click', () => {
+        if (!activeInlineFontKey) return;
+        const meta = global.LayaDefaults.getTextElementMeta(state, activeInlineFontKey);
+        if (!meta) return;
+        const cur = global.LayaDefaults.getBaseFontSize(state, activeInlineFontKey, meta.defaultSize);
+        setIndividualFontSize(activeInlineFontKey, cur + 2);
+      });
+    }
+    if (fReset) {
+      fReset.addEventListener('click', () => {
+        if (activeInlineFontKey) {
+          resetIndividualFontSize(activeInlineFontKey);
+        }
+      });
+    }
+
     document.addEventListener('pointerdown', (e) => {
       if (!editor || editor.classList.contains('hidden')) return;
       if (editor.contains(e.target) || e.target.id === 'overlayCanvas') return;
@@ -1239,10 +1459,35 @@
     });
   }
 
+  function refreshInlineFontBoxUI() {
+    const fBox = document.getElementById('inlineFontSizeBox');
+    const fRange = document.getElementById('inlineFontRange');
+    const fBadge = document.getElementById('inlineFontBadge');
+    if (!fBox || !fRange || !fBadge) return;
+
+    const meta = activeInlineFontKey
+      ? global.LayaDefaults.getTextElementMeta(state, activeInlineFontKey)
+      : null;
+    if (!meta) {
+      fBox.classList.add('hidden');
+      return;
+    }
+    fBox.classList.remove('hidden');
+    const basePx = global.LayaDefaults.getBaseFontSize(state, activeInlineFontKey, meta.defaultSize);
+    const effPx = Math.round(
+      global.LayaDefaults.getEffectiveFontSize(state, activeInlineFontKey, meta.defaultSize)
+    );
+    fRange.min = meta.min;
+    fRange.max = meta.max;
+    fRange.value = basePx;
+    fBadge.textContent = `${effPx}px`;
+  }
+
   function closeInlineEditor() {
     const editor = document.getElementById('canvasInlineEditor');
     if (editor) editor.classList.add('hidden');
     activeInlineHandler = null;
+    activeInlineFontKey = null;
   }
 
   function triggerDirectFileUpload(accept, callback) {
@@ -1290,6 +1535,8 @@
       extraWrap.appendChild(btn);
     });
 
+    refreshInlineFontBoxUI();
+
     editor.classList.remove('hidden');
     const popW = 300;
     const popH = editor.offsetHeight || 130;
@@ -1331,6 +1578,7 @@
       return;
     }
     const key = hit.key;
+    activeInlineFontKey = key;
 
     if (key === 'play_icon') {
       closeInlineEditor();
@@ -1453,6 +1701,7 @@
       play_title: { path: 'playEntry.appName', title: '应用名称' },
       play_meta: { path: 'playEntry.company', title: '公司名称' },
       play_install: { path: 'playEntry.installText', title: '安装按钮文字' },
+      play_inapp: { path: 'playEntry.inAppText', title: '包含内购小字' },
       play_stats: { path: 'playEntry.reviews', title: '评价与数据说明' },
       user_cancel_btn: { path: 'userModule.cancelText', title: '右侧取消按钮' },
       user_section_label: { path: 'userModule.sectionTitle', title: '用户分组小标题' },

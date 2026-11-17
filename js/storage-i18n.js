@@ -142,10 +142,11 @@
       const raw = localStorage.getItem(STATE_STORAGE_KEY);
       if (!raw) return defaultState;
       const parsed = JSON.parse(raw);
-      // offsets 与 hiddenElements 以保存值为准（不混入多余旧项）
+      // offsets、hiddenElements 与 fontSizes 以保存值为准（不混入多余旧项）
       const merged = deepMergeState(defaultState, parsed);
       merged.offsets = (parsed && parsed.offsets) || {};
       merged.hiddenElements = (parsed && parsed.hiddenElements) || {};
+      merged.fontSizes = (parsed && parsed.fontSizes) || {};
       return merged;
     } catch (_) {
       return defaultState;

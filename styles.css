@@ -1094,3 +1094,133 @@ input[type="range"] {
     border-top: 1px solid var(--border-dark);
   }
 }
+
+/* ==================== 全局统一与单项独立文字大小控制样式 ==================== */
+.font-scale-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.font-step-btn {
+  background: rgba(147, 51, 234, 0.2);
+  border: 1px solid rgba(192, 132, 252, 0.38);
+  color: #f5d0fe;
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.font-step-btn:hover {
+  background: rgba(168, 85, 247, 0.36);
+  border-color: #e879f9;
+}
+
+.inline-fontsize-box {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 4px;
+  padding-top: 7px;
+  border-top: 1px dashed rgba(192, 132, 252, 0.25);
+}
+
+.inline-fontsize-box.hidden {
+  display: none;
+}
+
+.inline-fontsize-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #e9d5ff;
+}
+
+.gizmo-font-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(192, 132, 252, 0.28);
+}
+
+.gizmo-font-group.hidden {
+  display: none;
+}
+
+.per-text-font-drawer {
+  background: rgba(12, 9, 22, 0.78);
+  border: 1px solid rgba(168, 85, 247, 0.26);
+  border-radius: 9px;
+  padding: 7px 9px;
+}
+
+.per-text-font-drawer > summary {
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e9d5ff;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.per-text-font-drawer > summary::-webkit-details-marker {
+  display: none;
+}
+
+.per-text-font-drawer > summary::after {
+  content: '展开 ▼';
+  font-size: 11px;
+  color: #c084fc;
+}
+
+.per-text-font-drawer[open] > summary::after {
+  content: '收起 ▲';
+}
+
+.per-text-font-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 310px;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.per-text-group-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #c084fc;
+  margin-top: 4px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid rgba(168, 85, 247, 0.16);
+}
+
+.per-text-row {
+  display: grid;
+  grid-template-columns: minmax(96px, 1.15fr) 1fr auto auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #e2e8f0;
+}
+
+.per-text-row .pt-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.per-text-row.is-custom .pt-label {
+  color: #f0abfc;
+  font-weight: 700;
+}
+
