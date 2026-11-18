@@ -17,6 +17,7 @@
       this.onHideElement = options.onHideElement || function () {};
       this.onDirectClickElement = options.onDirectClickElement || function () {};
       this.onDropFileOnElement = options.onDropFileOnElement || function () {};
+      this.onScaleElement = options.onScaleElement || function () {};
 
       this.dragMode = 'element';
       this.enableSnap = true;
@@ -30,6 +31,7 @@
       };
 
       this.dragging = null;
+      this.resizing = null;
       this.bindEvents();
     }
 
@@ -60,6 +62,15 @@
       return null;
     }
 
+    findResizeActionHit(sx, sy) {
+      const rb = this.renderer.resizeActionBox;
+      if (!rb) return null;
+      if (sx >= rb.x && sx <= rb.x + rb.w && sy >= rb.y && sy <= rb.y + rb.h) {
+        return rb;
+      }
+      return null;
+    }
+
     findHitBox(sx, sy, forceModule) {
       const boxes = this.renderer.hitBoxes || [];
       const useModuleOnly = forceModule || this.dragMode === 'module';
@@ -79,7 +90,12 @@
 
       const elements = matches.filter((b) => b.kind === 'element');
       if (elements.length > 0) {
-        elements.sort((a, b) => a.w * a.h - b.w * b.h);
+        elements.sort((a, b) => {
+          const aCustom = String(a.key || '').startsWith('custom_el_') ? 1 : 0;
+          const bCustom = String(b.key || '').startsWith('custom_el_') ? 1 : 0;
+          if (aCustom !== bCustom) return bCustom - aCustom;
+          return a.w * a.h - b.w * b.h;
+        });
         return elements[0];
       }
       return matches[0];
@@ -123,13 +139,29 @@
         if (e.button !== 0) return;
         const pt = this.toStageCoords(e.clientX, e.clientY);
 
-        // 0) 點擊選中框旁的紅色「✕ 隱藏」按鈕
+        // 0) 點擊選中框旁的紅色「✕ 刪除」按鈕
         const delHit = this.findDeleteActionHit(pt.x, pt.y);
         if (delHit) {
           this.uiState.selectedBox = null;
           this.uiState.hoveredBox = null;
           this.uiState.guides = [];
           this.onHideElement(delHit.key, delHit.label);
+          return;
+        }
+
+        // 0b) 點擊選中框右下角縮放手柄
+        const resHit = this.findResizeActionHit(pt.x, pt.y);
+        if (resHit) {
+          const startDist = Math.max(16, Math.hypot(pt.x - resHit.cx, pt.y - resHit.cy));
+          this.resizing = {
+            pointerId: e.pointerId,
+            key: resHit.key,
+            cx: resHit.cx,
+            cy: resHit.cy,
+            startDist
+          };
+          this.onScaleElement(resHit.key, 1, 'start');
+          el.setPointerCapture(e.pointerId);
           return;
         }
 
@@ -182,6 +214,18 @@
         const pt = this.toStageCoords(e.clientX, e.clientY);
         const hovVid = this.findHoveredVideoCardId(pt.x, pt.y);
         this.uiState.hoveredCardId = hovVid ? hovVid.cardId : null;
+
+        if (this.resizing && this.resizing.pointerId === e.pointerId) {
+          const curDist = Math.max(8, Math.hypot(pt.x - this.resizing.cx, pt.y - this.resizing.cy));
+          const ratio = curDist / this.resizing.startDist;
+          this.onScaleElement(this.resizing.key, ratio, 'move');
+          const updated = (this.renderer.hitBoxes || []).find((b) => b.key === this.resizing.key);
+          if (updated) {
+            this.uiState.selectedBox = updated;
+          }
+          el.style.cursor = 'nwse-resize';
+          return;
+        }
 
         if (this.dragging && this.dragging.pointerId === e.pointerId) {
           const rawDX = pt.x - this.dragging.startPointerX;
@@ -236,6 +280,12 @@
           return;
         }
 
+        if (this.findResizeActionHit(pt.x, pt.y)) {
+          this.uiState.hoveredBox = null;
+          el.style.cursor = 'nwse-resize';
+          return;
+        }
+
         if (this.enableDrag) {
           const hit = this.findHitBox(pt.x, pt.y, e.altKey);
           this.uiState.hoveredBox = hit;
@@ -247,6 +297,16 @@
       });
 
       const endDrag = (e) => {
+        if (this.resizing && this.resizing.pointerId === e.pointerId) {
+          const resKey = this.resizing.key;
+          this.resizing = null;
+          el.style.cursor = 'pointer';
+          try {
+            el.releasePointerCapture(e.pointerId);
+          } catch (_) {}
+          this.onScaleElement(resKey, 1, 'end');
+          return;
+        }
         if (!this.dragging || this.dragging.pointerId !== e.pointerId) return;
         const wasMoved = this.dragging.moved;
         const hitSnap = this.dragging.hitSnapshot;

@@ -62,17 +62,26 @@ body {
   width: 36px;
   height: 36px;
   border-radius: 11px;
-  background: radial-gradient(circle at 45% 45%, #ff47d6 0%, #9333ea 56%, #2e1065 100%);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 900;
-  font-style: italic;
-  font-size: 13px;
-  color: #fff;
-  box-shadow: 0 0 20px rgba(192, 38, 211, 0.55);
-  border: 1px solid rgba(250, 232, 255, 0.45);
-  animation: logoPulse 3.6s ease-in-out infinite;
+  box-shadow: 0 2px 14px rgba(66, 133, 244, 0.25), 0 0 18px rgba(192, 38, 211, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  flex-shrink: 0;
+  transition: transform 0.25s var(--ease-spring), box-shadow 0.25s ease;
+}
+
+.brand-logo:hover {
+  transform: scale(1.06) rotate(-2deg);
+}
+
+.brand-logo-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
 }
 
 @keyframes logoPulse {
@@ -284,8 +293,9 @@ button:disabled {
 }
 
 .stage-subbar {
-  height: 46px;
-  padding: 0 20px;
+  min-height: 44px;
+  height: auto;
+  padding: 6px 16px;
   border-bottom: 1px solid rgba(168, 85, 247, 0.14);
   background: rgba(12, 9, 24, 0.84);
   backdrop-filter: blur(10px);
@@ -294,14 +304,16 @@ button:disabled {
   justify-content: space-between;
   font-size: 12px;
   color: var(--text-muted);
-  gap: 10px;
+  gap: 8px 12px;
+  flex-wrap: wrap;
   flex-shrink: 0;
 }
 
 .stage-tool-group {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .zoom-ctrl {
@@ -679,6 +691,7 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
 }
 
 .val-pill {
@@ -1378,5 +1391,229 @@ input[type="range"] {
   object-fit: cover;
   display: block;
 }
+
+.quick-add-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.quick-add-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  width: 316px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(18, 13, 34, 0.96);
+  border: 1px solid rgba(192, 132, 252, 0.45);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(12px);
+}
+
+.quick-add-title {
+  font-size: 11px;
+  color: #e9d5ff;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.quick-add-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.quick-restore-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 5px;
+  margin-left: 3px;
+  border-radius: 999px;
+  background: #e11d48;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.custom-elements-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.custom-el-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 7px 8px;
+  border-radius: 9px;
+  background: rgba(13, 10, 26, 0.85);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+}
+
+.custom-el-row-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.custom-el-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* ===== 顶栏/工具栏防挤压防换行优化 ===== */
+.topbar {
+  height: auto;
+  min-height: 60px;
+  padding: 8px 20px;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.topbar button,
+.topbar select,
+.topbar .brand-title,
+.topbar .brand-sub,
+.stage-subbar label,
+.stage-subbar span,
+.stage-subbar button,
+.stage-subbar select {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.stage-subbar .ctrl-select-sm,
+.stage-subbar .ctrl-select {
+  width: auto;
+  min-width: 140px;
+}
+
+/* ===== 字段随机筛子按钮 (🎲) ===== */
+.field-dice-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 5px;
+  margin-left: auto;
+  border-radius: 6px;
+  border: 1px solid rgba(192, 132, 252, 0.28);
+  background: rgba(147, 51, 234, 0.14);
+  color: #f5d0fe;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.22s var(--ease-spring), background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.field-dice-btn:hover {
+  background: rgba(192, 38, 211, 0.34);
+  border-color: rgba(240, 171, 252, 0.65);
+  box-shadow: 0 0 10px rgba(217, 70, 239, 0.35);
+  transform: translateY(-1px) scale(1.08);
+}
+
+.field-dice-btn:active {
+  transform: scale(0.92);
+}
+
+.field-dice-btn.dice-spinning {
+  animation: diceSpin 0.42s var(--ease-spring);
+}
+
+@keyframes diceSpin {
+  0% {
+    transform: rotate(0deg) scale(1);
+  }
+  45% {
+    transform: rotate(210deg) scale(1.22);
+  }
+  100% {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+/* ===== 画布点击联动右侧编辑区高亮定位 ===== */
+.field-jump-highlight {
+  position: relative;
+  border-radius: 10px;
+  animation: fieldJumpPulse 1.6s ease-out;
+}
+
+@keyframes fieldJumpPulse {
+  0% {
+    box-shadow: 0 0 0 3px rgba(232, 121, 249, 0.85), 0 0 24px rgba(192, 38, 211, 0.55);
+    background-color: rgba(192, 38, 211, 0.16);
+  }
+  50% {
+    box-shadow: 0 0 0 2px rgba(232, 121, 249, 0.45), 0 0 16px rgba(192, 38, 211, 0.28);
+    background-color: rgba(192, 38, 211, 0.08);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(232, 121, 249, 0), 0 0 0 rgba(192, 38, 211, 0);
+    background-color: transparent;
+  }
+}
+
+/* ===== 平滑切换、弹窗与面板动效 ===== */
+.mode-sections-wrap:not(.hidden) {
+  animation: panelFadeSlideIn 0.28s var(--ease-spring) both;
+}
+
+@keyframes panelFadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.quick-add-popover:not(.hidden) {
+  animation: popoverPopIn 0.22s var(--ease-spring) both;
+  transform-origin: top left;
+}
+
+@keyframes popoverPopIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.stage-pill-btn,
+.ctrl-btn,
+.mini-action-btn,
+.quick-chip-btn {
+  transition: transform 0.2s var(--ease-spring), background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.stage-pill-btn:active,
+.ctrl-btn:active,
+.mini-action-btn:active,
+.quick-chip-btn:active {
+  transform: scale(0.96);
+}
+
+
 
 

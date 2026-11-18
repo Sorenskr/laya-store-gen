@@ -1,5 +1,5 @@
 /**
- * Laya 商店截图生成器 - 主应用控制器
+ * 应用商店截图与个人主页生成器 - 主应用控制器
  * 1. 编辑栏 100% 固定简体中文，画布内容支持一键简繁互转
  * 2. 自动持久化保存所有文字、排版、隐藏状态及上传的图片/MP4视频（IndexedDB），刷新或重开完全保留，仅点击「重置默认」清空
  */
@@ -22,6 +22,7 @@
     cardMedia: {},
     profCardMedia: {},
     profCommentAvatars: {},
+    customElementImages: {},
     raw: global.LayaDefaults.createRawImageMap()
   };
 
@@ -35,11 +36,38 @@
   let lastCanvasSize = { w: 1920, h: 1080 };
   let autoAiBatchTimer = 0;
   let pendingAutoAiPostIds = new Set();
+  let stageDirty = true;
+  let overlayDirty = true;
+  let warmupUntil = Date.now() + 2800;
+  let lastIdleAnimTime = 0;
+  let lastJumpKey = '';
+  let lastJumpAt = 0;
+
+  function requestStageRender() {
+    stageDirty = true;
+    overlayDirty = true;
+  }
+
+  function requestOverlayRender() {
+    overlayDirty = true;
+  }
+
+  function hasPlayingVideoOnActiveWorkspace() {
+    if (state.activeWorkspace === 'profile') {
+      return Object.values(mediaRegistry.profCardMedia || {}).some(
+        (m) => m && m.type === 'video' && m.el && !m.el.paused && !m.el.ended
+      );
+    }
+    return Object.values(mediaRegistry.cardMedia || {}).some(
+      (m) => m && m.type === 'video' && m.el && !m.el.paused && !m.el.ended
+    );
+  }
 
   function persistState() {
     if (global.LayaPersistence) {
       global.LayaPersistence.scheduleSaveState(state);
     }
+    requestStageRender();
   }
 
   function persistMedia(slotKey, fileOrBlob, extraMeta) {
@@ -101,14 +129,23 @@
           mediaRegistry.profCommentAvatars[cmtId] = img;
           renderProfileCommentsEditor();
         });
+      } else if (key.startsWith('customElImg:')) {
+        const elId = key.slice('customElImg:'.length);
+        loadBlobAsImage(rec.blob, (img) => {
+          mediaRegistry.customElementImages[elId] = img;
+          renderCustomElementsList();
+          requestStageRender();
+        });
       }
     }
+    requestStageRender();
   }
 
   function init() {
     const stageCanvas = document.getElementById('stageCanvas');
     const overlayCanvas = document.getElementById('overlayCanvas');
 
+    let scaleStartSnapshot = null;
     renderer = new global.StageRenderer(stageCanvas, overlayCanvas, mediaRegistry);
     interaction = new global.StageInteraction({
       overlayCanvas,
@@ -122,9 +159,35 @@
         updateSelectedElementBar();
         persistState();
       },
+      onScaleElement: (key, ratio, phase) => {
+        if (!key || !key.startsWith('custom_el_')) return;
+        const elId = key.slice('custom_el_'.length);
+        const target = (state.customElements || []).find((it) => it && it.id === elId);
+        if (!target) return;
+        if (phase === 'start') {
+          scaleStartSnapshot = { key, scale: Number(target.scale) || 1 };
+        } else if (phase === 'move') {
+          if (!scaleStartSnapshot || scaleStartSnapshot.key !== key) {
+            scaleStartSnapshot = { key, scale: Number(target.scale) || 1 };
+          }
+          target.scale = Math.max(0.3, Math.min(3.5, Math.round(scaleStartSnapshot.scale * ratio * 100) / 100));
+          updateSelectedElementBar();
+          requestStageRender();
+        } else if (phase === 'end') {
+          scaleStartSnapshot = null;
+          renderCustomElementsList();
+          renderPerTextFontList();
+          persistState();
+        }
+      },
       onSelectElement: (hit) => {
-        if (!hit) closeInlineEditor();
+        if (!hit) {
+          closeInlineEditor();
+        } else {
+          syncRightPanelToCanvasHit(hit);
+        }
         updateSelectedElementBar();
+        requestStageRender();
       },
       onToggleCardVideo: (cardId) => {
         toggleCardVideoPlayback(cardId);
@@ -143,6 +206,7 @@
 
     bindInlineCanvasEditor();
     bindToolbarEvents();
+    bindCustomElementEvents();
     bindWorkspaceModeBarEvents();
     bindAvatarLibraryModal();
     bindProfileControlEvents();
@@ -153,6 +217,7 @@
     syncPosterLangButtons();
     syncGlobalFontScaleLabels();
     renderHiddenElementsManager();
+    renderCustomElementsList();
     renderDynamicNavControls();
     renderDynamicFeedCards();
     renderProfilePanelEditors();
@@ -190,6 +255,15 @@
     // 异步恢复上次上传的所有图片与 MP4 视频
     restorePersistedMediaBlobs();
 
+    // 全局捕获表单与点击操作触发按需重绘，鼠标悬停仅重绘覆盖层
+    document.addEventListener('input', requestStageRender, true);
+    document.addEventListener('change', requestStageRender, true);
+    document.addEventListener('click', requestStageRender, true);
+
+    ['pointermove', 'pointerdown', 'pointerup', 'pointercancel', 'pointerleave'].forEach((evt) => {
+      overlayCanvas.addEventListener(evt, requestOverlayRender, { passive: true });
+    });
+
     window.addEventListener('resize', fitStageToViewport);
     window.addEventListener('beforeunload', () => {
       if (global.LayaPersistence) {
@@ -199,25 +273,46 @@
 
     let lastSyncedProfMaxScroll = -1;
     const tick = () => {
-      renderer.render(state);
-      if (stageCanvas.width !== lastCanvasSize.w || stageCanvas.height !== lastCanvasSize.h) {
-        lastCanvasSize.w = stageCanvas.width;
-        lastCanvasSize.h = stageCanvas.height;
-        fitStageToViewport();
-      }
-      if (
-        state.activeWorkspace === 'profile' &&
-        state.profileCenter &&
-        state.profileCenter.viewportMode === 'mobile'
-      ) {
-        const nextMax = Math.max(100, Math.round(renderer.lastProfileMaxScroll || 0));
-        if (nextMax !== lastSyncedProfMaxScroll) {
-          lastSyncedProfMaxScroll = nextMax;
-          const rng = document.getElementById('rngProfScrollY');
-          if (rng) rng.max = String(nextMax);
+      const nowMs = Date.now();
+      const playingVid = hasPlayingVideoOnActiveWorkspace();
+      const inWarmup = nowMs < warmupUntil;
+      const animActive = Boolean(state.layout && state.layout.enableAnim !== false);
+      const dueIdleAnim = animActive && nowMs - lastIdleAnimTime >= 75;
+
+      if (stageDirty || playingVid || inWarmup || dueIdleAnim) {
+        stageDirty = false;
+        if (dueIdleAnim) lastIdleAnimTime = nowMs;
+        renderer.render(state);
+        if (stageCanvas.width !== lastCanvasSize.w || stageCanvas.height !== lastCanvasSize.h) {
+          lastCanvasSize.w = stageCanvas.width;
+          lastCanvasSize.h = stageCanvas.height;
+          fitStageToViewport();
         }
+        if (
+          state.activeWorkspace === 'profile' &&
+          state.profileCenter &&
+          state.profileCenter.viewportMode === 'mobile'
+        ) {
+          const nextMax = Math.max(100, Math.round(renderer.lastProfileMaxScroll || 0));
+          if (nextMax !== lastSyncedProfMaxScroll) {
+            lastSyncedProfMaxScroll = nextMax;
+            const rng = document.getElementById('rngProfScrollY');
+            if (rng) rng.max = String(nextMax);
+          }
+        }
+        if (interaction && interaction.uiState && interaction.uiState.selectedBox) {
+          const refreshed = (renderer.hitBoxes || []).find(
+            (b) => b.key === interaction.uiState.selectedBox.key
+          );
+          if (refreshed) interaction.uiState.selectedBox = refreshed;
+        }
+        overlayDirty = true;
       }
-      renderer.renderOverlay(interaction.uiState);
+
+      if (overlayDirty) {
+        overlayDirty = false;
+        renderer.renderOverlay(interaction.uiState);
+      }
       requestAnimationFrame(tick);
     };
     requestAnimationFrame(tick);
@@ -255,6 +350,7 @@
     if (zoomLabel) {
       zoomLabel.textContent = `${Math.round(scale * 100)}%`;
     }
+    requestOverlayRender();
   }
 
   function syncStageTransparencyClass() {
@@ -304,6 +400,7 @@
     renderDynamicNavControls();
     renderDynamicFeedCards();
     renderProfilePanelEditors();
+    renderCustomElementsList();
     renderPerTextFontList();
     persistState();
     showToast(
@@ -325,8 +422,10 @@
     }
     updateSelectedElementBar();
     renderHiddenElementsManager();
+    renderDynamicNavControls();
     renderDynamicFeedCards();
     renderProfilePanelEditors();
+    renderCustomElementsList();
     persistState();
     showToast(`🗑️ 已隐藏「${label || key}」，可在右侧随时恢复`);
   }
@@ -336,8 +435,10 @@
     const lbl = state.hiddenElements[key];
     delete state.hiddenElements[key];
     renderHiddenElementsManager();
+    renderDynamicNavControls();
     renderDynamicFeedCards();
     renderProfilePanelEditors();
+    renderCustomElementsList();
     persistState();
     showToast(`👁️ 已恢复显示「${lbl}」`);
   }
@@ -353,9 +454,14 @@
   function renderHiddenElementsManager() {
     const wrap = document.getElementById('hiddenManagerBox');
     const list = document.getElementById('hiddenChipsList');
+    const countBadge = document.getElementById('quickRestoreCount');
+    const entries = Object.entries(state.hiddenElements || {});
+    if (countBadge) {
+      countBadge.textContent = String(entries.length);
+      countBadge.classList.toggle('hidden', entries.length === 0);
+    }
     if (!wrap || !list) return;
 
-    const entries = Object.entries(state.hiddenElements || {});
     if (entries.length === 0) {
       wrap.classList.add('hidden');
       list.innerHTML = '';
@@ -369,7 +475,7 @@
       btn.type = 'button';
       btn.className = 'restore-chip';
       btn.textContent = `↺ ${label}`;
-      btn.title = '点击恢复显示此元素';
+      btn.title = '点击重新加回画布';
       btn.addEventListener('click', () => restoreElementByKey(key));
       list.appendChild(btn);
     });
@@ -554,9 +660,19 @@
         state.userModule.distance = global.LayaPosterLang.convertString(state.userModule.distance, true);
         state.userModule.bioTag = global.LayaPosterLang.convertString(state.userModule.bioTag, true);
       }
+      const g = (state.userModule && state.userModule.gender) || 'female';
+      const pref = g === 'male' ? 'male' : g === 'female' ? 'female' : 'any';
+      const picked =
+        global.LayaProfileCenter && global.LayaProfileCenter.pickRandomAvatarFromLibrary
+          ? global.LayaProfileCenter.pickRandomAvatarFromLibrary(pref)
+          : { category: pref === 'male' ? 'guys' : 'beauties', index: Math.floor(Math.random() * 60) };
+      mediaRegistry.userAvatar = null;
+      removePersistedMedia('userAvatar');
+      state.userModule.avatarCategory = picked.category;
+      state.userModule.avatarIndex = picked.index;
       syncStaticInputsFromState();
       persistState();
-      showToast(`🎲 已随机生成个人资料（${state.userModule.age} · ${state.userModule.region}）`);
+      showToast(`🎲 已随机生成个人资料与头像（${state.userModule.age} · ${state.userModule.region}）`);
     });
 
     document.getElementById('btnAiCopyTop').addEventListener('click', () => {
@@ -575,11 +691,12 @@
       const generated = global.LayaAIExporter.generateLocalFallbackCopy(
         state.aiConfig.topicPrompt,
         targetCards.length,
-        state.posterLang === 'zh-TW'
+        state.posterLang === 'zh-TW',
+        Boolean(state.aiConfig && state.aiConfig.includeOverlayText)
       );
       applyGeneratedCopyToCards(targetCards, generated);
       persistState();
-      showToast('已填入精选爆款短视频文案，可继续手动微调');
+      showToast('已填入精选短视频底部标题，可继续手动微调');
     });
 
     document.getElementById('btnExportPNG').addEventListener('click', async () => {
@@ -622,12 +739,14 @@
       Object.keys(fresh).forEach((k) => {
         state[k] = fresh[k];
       });
+      mediaRegistry.customElementImages = {};
       interaction.uiState.selectedBox = null;
       syncStaticInputsFromState();
       syncStageTransparencyClass();
       syncPosterLangButtons();
       syncGlobalFontScaleLabels();
       renderHiddenElementsManager();
+      renderCustomElementsList();
       renderDynamicNavControls();
       renderDynamicFeedCards();
       renderProfilePanelEditors();
@@ -749,9 +868,11 @@
     const txt = document.getElementById('selectedGizmoName');
     const fontGroup = document.getElementById('selectedGizmoFontGroup');
     const fontVal = document.getElementById('selectedGizmoFontVal');
+    const customTools = document.getElementById('selectedCustomTools');
     const sel = interaction && interaction.uiState.selectedBox;
     if (!sel) {
       bar.classList.add('hidden');
+      if (customTools) customTools.classList.add('hidden');
       return;
     }
     const off = state.offsets[sel.key] || { x: 0, y: 0 };
@@ -759,6 +880,10 @@
     txt.textContent = `已选中：${sel.label} (${off.x >= 0 ? '+' : ''}${off.x}, ${
       off.y >= 0 ? '+' : ''
     }${off.y})`;
+
+    if (customTools) {
+      customTools.classList.toggle('hidden', !String(sel.key || '').startsWith('custom_el_'));
+    }
 
     const meta = global.LayaDefaults.getTextElementMeta(state, sel.key);
     if (fontGroup && fontVal) {
@@ -818,6 +943,245 @@
         setTimeout(() => el.classList.remove('flash-focus'), 1100);
       }
     }
+  }
+
+  function resolveRightPanelTargetForHit(hit) {
+    if (!hit || !hit.key) return null;
+    const key = String(hit.key);
+    const parentMod = String(hit.parentModule || '');
+
+    if (key.startsWith('custom_el_')) {
+      const elId = key.slice('custom_el_'.length);
+      return {
+        sectionId: null,
+        selector: `#customElementsPanel [data-ce-id="${elId}"], #customElementsPanel`
+      };
+    }
+
+    if (state.activeWorkspace === 'profile') {
+      const pc = state.profileCenter || {};
+      const profStaticMap = {
+        prof_bg_banner: { sectionId: 'prof-sec-header', selector: '[data-bind="profileCenter.header.bgStyle"]' },
+        prof_back_btn: { sectionId: 'prof-sec-header', selector: '[data-bind="profileCenter.header.bgStyle"]' },
+        prof_more_btn: { sectionId: 'prof-sec-header', selector: '[data-bind="profileCenter.header.bgStyle"]' },
+        prof_online_badge: { sectionId: 'prof-sec-header', selector: '[data-bind="profileCenter.header.onlineBadgeText"]' },
+        prof_sb_time: { sectionId: 'prof-sec-header', selector: '[data-bind="profileCenter.header.time"]' },
+        prof_avatar: { sectionId: 'prof-sec-user', selector: '#btnRandProfAvatar' },
+        prof_nickname: { sectionId: 'prof-sec-user', selector: '[data-bind="profileCenter.user.nickname"]' },
+        prof_ip_text: { sectionId: 'prof-sec-user', selector: '[data-bind="profileCenter.user.ipText"]' },
+        prof_id_row: { sectionId: 'prof-sec-user', selector: '[data-bind="profileCenter.user.userId"]' },
+        prof_user_id: { sectionId: 'prof-sec-user', selector: '[data-bind="profileCenter.user.userId"]' },
+        prof_age_badge: { sectionId: 'prof-sec-user', selector: '[data-bind="profileCenter.user.age"]' },
+        prof_level_badge: { sectionId: 'prof-sec-user', selector: '[data-bind="profileCenter.user.level"]' },
+        prof_voice_tag: { sectionId: 'prof-sec-user', selector: '[data-bind="profileCenter.user.voiceTag"]' },
+        prof_bio_text: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.bio.text"]' },
+        prof_moment_icon: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.momentBar.iconText"]' },
+        prof_moment_desc: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.momentBar.descText"]' },
+        prof_moment_bar: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.momentBar.descText"]' },
+        prof_btn_follow: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.actions.followText"]' },
+        prof_btn_msg: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.actions.msgText"]' },
+        prof_btn_friend: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.actions.msgText"]' },
+        prof_content_search: { sectionId: 'prof-sec-feed', selector: '#profTabsEditorList' },
+        prof_comments_header: { sectionId: 'prof-sec-comments', selector: '[data-bind="profileCenter.commentSection.headerTitle"]' },
+        prof_comments_placeholder: { sectionId: 'prof-sec-comments', selector: '[data-bind="profileCenter.commentSection.inputPlaceholder"]' }
+      };
+      if (profStaticMap[key]) return profStaticMap[key];
+      if (key.startsWith('prof_sb_')) {
+        return { sectionId: 'prof-sec-header', selector: '[data-bind="profileCenter.header.battery"]' };
+      }
+      if (key.startsWith('prof_extra_badge_')) {
+        return { sectionId: 'prof-sec-user', selector: '#profExtraBadgesList' };
+      }
+      const statMatch = key.match(/^prof_stat_(?:num|lbl)_(\d+)$/);
+      if (statMatch) {
+        return { sectionId: 'prof-sec-stats', selector: `#profStatsEditorList [data-stat-idx="${statMatch[1]}"]` };
+      }
+      if (key.startsWith('prof_bio')) {
+        return { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.bio.text"]' };
+      }
+      if (key.startsWith('prof_moment_')) {
+        return { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.momentBar.descText"]' };
+      }
+      if (key.startsWith('prof_tab_')) {
+        return { sectionId: 'prof-sec-feed', selector: '#profTabsEditorList' };
+      }
+      if (key.startsWith('prof_post_')) {
+        const matchedPost = (pc.posts || []).find((p) => p && (key === `prof_post_${p.id}` || key.endsWith(`_${p.id}`)));
+        if (matchedPost) {
+          let field = '';
+          if (key.startsWith('prof_post_title_')) field = 'title';
+          else if (key.startsWith('prof_post_hotcmt_')) field = 'hotComment';
+          else if (key.startsWith('prof_post_likes_')) field = 'likes';
+          else if (key.startsWith('prof_post_overlay_')) field = 'overlayTitle';
+          else if (key.startsWith('prof_post_pin_')) field = 'pinBadge';
+          else if (key.startsWith('prof_post_watched_')) field = 'watchedTag';
+          else if (key.startsWith('prof_post_time_')) field = 'publishTime';
+          else if (key.startsWith('prof_post_author_')) field = 'customAuthor';
+          return {
+            sectionId: 'prof-sec-feed',
+            selector: field
+              ? `[data-post-id="${matchedPost.id}"] [data-field="${field}"]`
+              : `[data-post-id="${matchedPost.id}"]`
+          };
+        }
+        return { sectionId: 'prof-sec-feed', selector: '#profPostsEditorList' };
+      }
+      if (key.startsWith('prof_cmt_')) {
+        const cmtItems = (pc.commentSection && pc.commentSection.items) || [];
+        const matchedCmt = cmtItems.find((c) => c && (key === `prof_cmt_${c.id}` || key.endsWith(`_${c.id}`)));
+        if (matchedCmt) {
+          let field = '';
+          if (key.startsWith('prof_cmt_nick_')) field = 'nickname';
+          else if (key.startsWith('prof_cmt_text_')) field = 'text';
+          else if (key.startsWith('prof_cmt_reply_')) field = 'authorReply';
+          else if (key.startsWith('prof_cmt_meta_')) field = 'timeLoc';
+          else if (key.startsWith('prof_cmt_likes_')) field = 'likes';
+          return {
+            sectionId: 'prof-sec-comments',
+            selector: field
+              ? `[data-cmt-id="${matchedCmt.id}"] [data-field="${field}"]`
+              : `[data-cmt-id="${matchedCmt.id}"]`
+          };
+        }
+        return { sectionId: 'prof-sec-comments', selector: '#profCommentsEditorList' };
+      }
+      if (key.startsWith('prof_bot_')) {
+        return { sectionId: 'prof-sec-comments', selector: '#profBottomNavEditorList' };
+      }
+      const modMap = {
+        prof_header: { sectionId: 'prof-sec-header', selector: '[data-bind="profileCenter.header.bgStyle"]' },
+        prof_status_bar: { sectionId: 'prof-sec-header', selector: '[data-bind="profileCenter.header.time"]' },
+        prof_identity: { sectionId: 'prof-sec-user', selector: '[data-bind="profileCenter.user.nickname"]' },
+        prof_stats: { sectionId: 'prof-sec-stats', selector: '#profStatsEditorList' },
+        prof_bio: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.bio.text"]' },
+        prof_moment_bar: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.momentBar.descText"]' },
+        prof_actions: { sectionId: 'prof-sec-stats', selector: '[data-bind="profileCenter.actions.followText"]' },
+        prof_tabs: { sectionId: 'prof-sec-feed', selector: '#profTabsEditorList' },
+        prof_feed: { sectionId: 'prof-sec-feed', selector: '#profPostsEditorList' },
+        prof_comment_section: { sectionId: 'prof-sec-comments', selector: '#profCommentsEditorList' },
+        prof_bottom_nav: { sectionId: 'prof-sec-comments', selector: '#profBottomNavEditorList' }
+      };
+      if (modMap[key]) return modMap[key];
+      if (modMap[parentMod]) return modMap[parentMod];
+      return null;
+    }
+
+    const storeStaticMap = {
+      step_title_1: { sectionId: 'sec-status', selector: '[data-bind="steps.step1"]' },
+      step_title_2: { sectionId: 'sec-status', selector: '[data-bind="steps.step2"]' },
+      step_title_3: { sectionId: 'sec-status', selector: '[data-bind="steps.step3"]' },
+      sb_time: { sectionId: 'sec-status', selector: '[data-bind="statusBar.time"]' },
+      sb_notifs: { sectionId: 'sec-status', selector: '[data-bind="statusBar.battery"]' },
+      sb_system: { sectionId: 'sec-status', selector: '[data-bind="statusBar.battery"]' },
+      play_icon: { sectionId: 'sec-play', selector: '#btnResetPlayIcon' },
+      play_store_logo: { sectionId: 'sec-play', selector: '#btnResetPlayIcon' },
+      floating_brand_logo: { sectionId: 'sec-play', selector: '#btnResetPlayIcon' },
+      play_header: { sectionId: 'sec-play', selector: '[data-bind="playEntry.storeHeader"]' },
+      play_install: { sectionId: 'sec-play', selector: '[data-bind="playEntry.installText"]' },
+      play_title: { sectionId: 'sec-play', selector: '[data-bind="playEntry.appName"]' },
+      play_meta: { sectionId: 'sec-play', selector: '[data-bind="playEntry.company"]' },
+      play_stats: { sectionId: 'sec-play', selector: '[data-bind="playEntry.rating"]' },
+      play_inapp: { sectionId: 'sec-play', selector: '[data-bind="playEntry.ageText"]' },
+      play_age: { sectionId: 'sec-play', selector: '[data-bind="playEntry.ageText"]' },
+      play_close: { sectionId: 'sec-play', selector: '#sec-play .acc-body' },
+      play_strip: { sectionId: 'sec-play', selector: '#sec-play .acc-body' },
+      module_1: { sectionId: 'sec-play', selector: '#sec-play .acc-body' },
+      module_2: { sectionId: 'sec-nav', selector: '[data-bind="navModule.showGuideArrows"]' },
+      user_avatar: { sectionId: 'sec-user', selector: '#btnRandStoreAvatar' },
+      user_search_box: { sectionId: 'sec-user', selector: '[data-bind="userModule.searchQuery"]' },
+      user_cancel_btn: { sectionId: 'sec-user', selector: '[data-bind="userModule.searchQuery"]' },
+      user_nickname: { sectionId: 'sec-user', selector: '[data-bind="userModule.nickname"]' },
+      user_age_badge: { sectionId: 'sec-user', selector: '[data-bind="userModule.age"]' },
+      user_level_badge: { sectionId: 'sec-user', selector: '[data-bind="userModule.level"]' },
+      user_bio_tag: { sectionId: 'sec-user', selector: '[data-bind="userModule.bioTag"]' },
+      user_id_row: { sectionId: 'sec-user', selector: '[data-bind="userModule.userId"]' },
+      user_region: { sectionId: 'sec-user', selector: '[data-bind="userModule.region"]' },
+      user_distance: { sectionId: 'sec-user', selector: '[data-bind="userModule.distance"]' },
+      module_3: { sectionId: 'sec-user', selector: '[data-bind="userModule.nickname"]' },
+      module_4: { sectionId: 'sec-feed', selector: '#feedCardsEditorList' }
+    };
+    if (storeStaticMap[key]) return storeStaticMap[key];
+    if (key.startsWith('top_tab_')) return { sectionId: 'sec-nav', selector: '#topTabsEditorList' };
+    if (key.startsWith('bot_nav_')) return { sectionId: 'sec-nav', selector: '#bottomNavEditorList' };
+    if (key.startsWith('nav_')) return { sectionId: 'sec-nav', selector: '[data-bind="navModule.showGuideArrows"]' };
+    if (key.startsWith('user_')) return { sectionId: 'sec-user', selector: '[data-bind="userModule.nickname"]' };
+
+    if (key.startsWith('feed_card_') || key.startsWith('card_')) {
+      const cards = (state.feedModule && state.feedModule.cards) || [];
+      const matchedCard = cards.find((c) => c && (key === `feed_card_${c.id}` || key.endsWith(`_${c.id}`)));
+      if (matchedCard) {
+        let field = '';
+        if (key.startsWith('card_title_')) field = 'overlayTitle';
+        else if (key.startsWith('card_sub_')) field = 'overlaySubtitle';
+        else if (key.startsWith('card_ft_')) field = 'footerTitle';
+        else if (key.startsWith('card_likes_')) field = 'likes';
+        return {
+          sectionId: 'sec-feed',
+          selector: field
+            ? `[data-card-id="${matchedCard.id}"] [data-field="${field}"]`
+            : `[data-card-id="${matchedCard.id}"]`
+        };
+      }
+      return { sectionId: 'sec-feed', selector: '#feedCardsEditorList' };
+    }
+
+    if (storeStaticMap[parentMod]) return storeStaticMap[parentMod];
+    return null;
+  }
+
+  function syncRightPanelToCanvasHit(hit) {
+    if (!hit || !hit.key) return;
+    const now = Date.now();
+    if (lastJumpKey === hit.key && now - lastJumpAt < 120) return;
+    lastJumpKey = hit.key;
+    lastJumpAt = now;
+
+    const mapped = resolveRightPanelTargetForHit(hit);
+    if (!mapped) return;
+
+    const sec = mapped.sectionId ? document.getElementById(mapped.sectionId) : null;
+    if (sec) {
+      sec.classList.add('open');
+      document.querySelectorAll('.panel-sticky-nav [data-jump-sec]').forEach((btn) => {
+        btn.classList.toggle('active', btn.getAttribute('data-jump-sec') === mapped.sectionId);
+      });
+    }
+
+    const findHighlightContainer = (node) => {
+      let cur = node;
+      while (cur && cur !== document.body) {
+        if (
+          cur.classList &&
+          (cur.classList.contains('field-group') ||
+            cur.classList.contains('feed-card-editor') ||
+            cur.classList.contains('custom-el-row') ||
+            cur.classList.contains('inline-item-row') ||
+            cur.classList.contains('upload-bar-row'))
+        ) {
+          return cur;
+        }
+        cur = cur.parentNode;
+      }
+      return null;
+    };
+
+    const targetNode = mapped.selector ? document.querySelector(mapped.selector) : null;
+    const highlightBox = (targetNode && findHighlightContainer(targetNode)) || targetNode || sec;
+
+    if (!highlightBox) return;
+
+    document.querySelectorAll('.field-jump-highlight').forEach((oldEl) => {
+      oldEl.classList.remove('field-jump-highlight');
+    });
+    void highlightBox.offsetWidth;
+    highlightBox.classList.add('field-jump-highlight');
+    setTimeout(() => highlightBox.classList.remove('field-jump-highlight'), 1650);
+
+    setTimeout(() => {
+      try {
+        highlightBox.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (_) {}
+    }, 60);
   }
 
   // ===========================================================================
@@ -909,6 +1273,55 @@
       });
     });
 
+    // 所有字段旁边的「🎲 筛子随机」按钮统一点按委托（包含静态面板与动态卡片列表）
+    document.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest ? e.target.closest('.field-dice-btn') : null;
+      if (!btn) return;
+      btn.classList.remove('dice-spinning');
+      void btn.offsetWidth;
+      btn.classList.add('dice-spinning');
+      setTimeout(() => btn.classList.remove('dice-spinning'), 460);
+
+      const target = btn.getAttribute('data-dice-target');
+      if (!target || !global.LayaDefaults || typeof global.LayaDefaults.rollRandomFieldValue !== 'function') {
+        return;
+      }
+
+      if (target === 'globalSearchId') {
+        const curId = state.userModule && state.userModule.userId;
+        const nextId = global.LayaDefaults.rollRandomFieldValue('searchId', curId, state);
+        if (nextId) {
+          syncEveryIdEverywhere(nextId, null);
+          persistState();
+          requestStageRender();
+        }
+        return;
+      }
+
+      const pool = btn.getAttribute('data-dice-pool') || target.split('.').pop();
+      const curVal = getByPath(state, target);
+      let nextVal = global.LayaDefaults.rollRandomFieldValue(pool, curVal, state);
+      if (nextVal === undefined || nextVal === null || nextVal === '') return;
+
+      const boundEls = document.querySelectorAll(`[data-bind="${target}"]`);
+      boundEls.forEach((el) => {
+        if (el.type === 'range' || el.type === 'number') {
+          nextVal = Number(nextVal);
+        }
+      });
+      setByPath(state, target, nextVal);
+
+      boundEls.forEach((el) => {
+        el.value = nextVal;
+      });
+      document.querySelectorAll(`[data-val-for="${target}"]`).forEach((badge) => {
+        badge.textContent = nextVal;
+      });
+
+      persistState();
+      requestStageRender();
+    });
+
     const inpGlobalId = document.getElementById('inpGlobalId');
     if (inpGlobalId) {
       inpGlobalId.addEventListener('input', () => {
@@ -930,7 +1343,7 @@
     document.getElementById('btnResetPlayIcon').addEventListener('click', () => {
       mediaRegistry.appIcon = null;
       removePersistedMedia('appIcon');
-      showToast('已恢复默认 Laya Logo');
+      showToast('已恢复默认应用图标');
     });
 
     document.getElementById('fileStoreLogo').addEventListener('change', (e) => {
@@ -977,8 +1390,33 @@
     document.getElementById('btnResetUserAvatar').addEventListener('click', () => {
       mediaRegistry.userAvatar = null;
       removePersistedMedia('userAvatar');
+      state.userModule.avatarCategory = 'beauties';
+      state.userModule.avatarIndex = 9;
+      persistState();
       showToast('已恢复默认用户头像');
     });
+
+    const btnRandStoreAvatar = document.getElementById('btnRandStoreAvatar');
+    if (btnRandStoreAvatar) {
+      btnRandStoreAvatar.addEventListener('click', () => {
+        const g = (state.userModule && state.userModule.gender) || 'female';
+        const pref = g === 'male' ? 'male' : g === 'female' ? 'female' : 'any';
+        const picked =
+          global.LayaProfileCenter && global.LayaProfileCenter.pickRandomAvatarFromLibrary
+            ? global.LayaProfileCenter.pickRandomAvatarFromLibrary(pref)
+            : { category: pref === 'male' ? 'guys' : 'beauties', index: Math.floor(Math.random() * 60) };
+        mediaRegistry.userAvatar = null;
+        removePersistedMedia('userAvatar');
+        state.userModule.avatarCategory = picked.category;
+        state.userModule.avatarIndex = picked.index;
+        if (state.hiddenElements) {
+          delete state.hiddenElements.user_avatar;
+          renderHiddenElementsManager();
+        }
+        persistState();
+        showToast('🎲 已从头像库随机更换头像');
+      });
+    }
 
     const btnOpenStoreAvatarLib = document.getElementById('btnOpenStoreAvatarLib');
     if (btnOpenStoreAvatarLib) {
@@ -1022,9 +1460,9 @@
         isTrad && global.LayaPosterLang ? global.LayaPosterLang.convertString(s, true) : s;
       const newCard = {
         id: `card_${Date.now()}`,
-        overlayTitle: conv(`热门语音话题\n第 ${nextIdx} 弹`),
-        overlaySubtitle: conv('这句话真的戳中无数人'),
-        footerTitle: conv(`热门语音话题精选 #${nextIdx}`),
+        overlayTitle: '',
+        overlaySubtitle: '',
+        footerTitle: conv(`热门分享卡片 #${nextIdx}`),
         likes: String(Math.floor(Math.random() * 2000 + 600)),
         mediaType: 'default',
         defaultVariant: nextIdx % 2 === 1 ? 'boy' : 'girl',
@@ -1103,15 +1541,17 @@
       const isActive = idx === state.navModule.activeTopIndex;
       const hidKey = `top_tab_${idx}`;
       const isHid = Boolean(state.hiddenElements && state.hiddenElements[hidKey]);
+      const canDel = state.navModule.topTabs.length > 1;
 
       row.innerHTML = `
         <button type="button" class="pill-radio ${isActive ? 'active' : ''}">
           ${isActive ? '★ 高亮' : '设高亮'}
         </button>
         <input type="text" class="ctrl-input" value="${escapeHtml(label)}" placeholder="标签文字" />
-        <button type="button" class="mini-clear-btn" title="${isHid ? '恢复显示' : '隐藏此标签'}">
+        <button type="button" class="mini-clear-btn" data-act="toggleVis" title="${isHid ? '恢复显示' : '隐藏此标签'}">
           ${isHid ? '显示' : '隐藏'}
         </button>
+        ${canDel ? '<button type="button" class="btn-icon-danger" data-act="delTab" title="删除此标签">删</button>' : ''}
       `;
 
       row.querySelector('.pill-radio').addEventListener('click', () => {
@@ -1126,10 +1566,23 @@
         persistState();
       });
 
-      row.querySelector('.mini-clear-btn').addEventListener('click', () => {
+      row.querySelector('[data-act="toggleVis"]').addEventListener('click', () => {
         toggleElementVisibility(hidKey, `顶部标签：${label}`);
         renderDynamicNavControls();
       });
+
+      const delBtn = row.querySelector('[data-act="delTab"]');
+      if (delBtn) {
+        delBtn.addEventListener('click', () => {
+          state.navModule.topTabs.splice(idx, 1);
+          if (state.navModule.activeTopIndex >= state.navModule.topTabs.length) {
+            state.navModule.activeTopIndex = Math.max(0, state.navModule.topTabs.length - 1);
+          }
+          renderDynamicNavControls();
+          renderPerTextFontList();
+          persistState();
+        });
+      }
 
       topContainer.appendChild(row);
     });
@@ -1144,6 +1597,7 @@
       const hasCustom = Boolean(mediaRegistry.customNavIcons[item.id]);
       const hidKey = `bot_nav_${idx}`;
       const isHid = Boolean(state.hiddenElements && state.hiddenElements[hidKey]);
+      const canDel = state.navModule.bottomTabs.length > 1;
 
       row.innerHTML = `
         <button type="button" class="pill-radio ${isActive ? 'active' : ''}">
@@ -1158,6 +1612,7 @@
         <button type="button" class="mini-clear-btn" data-act="toggleVis" title="${isHid ? '恢复显示' : '隐藏此导航'}">
           ${isHid ? '显示' : '隐藏'}
         </button>
+        ${canDel ? '<button type="button" class="btn-icon-danger" data-act="delNav" title="删除此导航">删</button>' : ''}
       `;
 
       row.querySelector('.pill-radio').addEventListener('click', () => {
@@ -1197,6 +1652,21 @@
         toggleElementVisibility(hidKey, `底部导航：${item.label}`);
         renderDynamicNavControls();
       });
+
+      const delNavBtn = row.querySelector('[data-act="delNav"]');
+      if (delNavBtn) {
+        delNavBtn.addEventListener('click', () => {
+          delete mediaRegistry.customNavIcons[item.id];
+          removePersistedMedia(`navIcon:${item.id}`);
+          state.navModule.bottomTabs.splice(idx, 1);
+          if (state.navModule.activeBottomIndex >= state.navModule.bottomTabs.length) {
+            state.navModule.activeBottomIndex = Math.max(0, state.navModule.bottomTabs.length - 1);
+          }
+          renderDynamicNavControls();
+          renderPerTextFontList();
+          persistState();
+        });
+      }
 
       botContainer.appendChild(row);
     });
@@ -1251,6 +1721,7 @@
 
       const box = document.createElement('div');
       box.className = 'feed-card-editor';
+      box.setAttribute('data-card-id', card.id);
 
       box.innerHTML = `
         <div class="feed-card-editor-head">
@@ -1259,6 +1730,7 @@
             <span class="media-type-pill ${isVideo ? 'is-video' : ''}">
               ${isVideo ? '🎬 MP4 视频' : isImage ? '🖼️ 自定义图片' : '🎨 原图封面'}
             </span>
+            <button type="button" class="btn-dark-sm" data-act="aiRecognize" title="根据当前图片或视频画面自动识别生成底部标题">🤖 识图写标题</button>
             <button type="button" class="btn-icon-danger" data-act="hideCard" title="隐藏整张卡片">隐藏卡片</button>
             ${
               state.feedModule.cards.length > 1
@@ -1303,31 +1775,31 @@
             : ''
         }
 
+        <div class="grid-2-col">
+          <div class="field-group">
+            <label class="field-label"><span>卡片底部标题（上传自动识别）</span><button type="button" class="field-dice-btn" data-dice-card="footerTitle" title="随机标题">🎲</button></label>
+            <input type="text" class="ctrl-input" data-field="footerTitle" value="${escapeHtml(
+              card.footerTitle || ''
+            )}" placeholder="上传图片/视频后自动识别生成" />
+          </div>
+          <div class="field-group">
+            <label class="field-label"><span>♡ 点赞数</span><button type="button" class="field-dice-btn" data-dice-card="likes" title="随机赞数">🎲</button></label>
+            <input type="text" class="ctrl-input" data-field="likes" value="${escapeHtml(card.likes)}" />
+          </div>
+        </div>
+
         <div class="field-group">
-          <label class="field-label">画面标题大字（白字黑边，支持换行；可用 *词* 标重点色）</label>
-          <textarea class="ctrl-textarea" rows="2" data-field="overlayTitle">${escapeHtml(
-            card.overlayTitle
+          <label class="field-label"><span>画面可选大字（默认留空无字幕）</span><button type="button" class="field-dice-btn" data-dice-card="overlayTitle" title="随机花字">🎲</button></label>
+          <textarea class="ctrl-textarea" rows="2" data-field="overlayTitle" placeholder="默认留空不遮挡画面，如需可填（可用 *词* 标重点色）">${escapeHtml(
+            card.overlayTitle || ''
           )}</textarea>
         </div>
 
         <div class="field-group">
-          <label class="field-label">画面下方字幕</label>
+          <label class="field-label"><span>画面可选下方字幕（默认留空）</span><button type="button" class="field-dice-btn" data-dice-card="overlaySubtitle" title="随机字幕">🎲</button></label>
           <input type="text" class="ctrl-input" data-field="overlaySubtitle" value="${escapeHtml(
-            card.overlaySubtitle
-          )}" />
-        </div>
-
-        <div class="grid-2-col">
-          <div class="field-group">
-            <label class="field-label">卡片底部标题摘要</label>
-            <input type="text" class="ctrl-input" data-field="footerTitle" value="${escapeHtml(
-              card.footerTitle || ''
-            )}" />
-          </div>
-          <div class="field-group">
-            <label class="field-label">♡ 点赞数</label>
-            <input type="text" class="ctrl-input" data-field="likes" value="${escapeHtml(card.likes)}" />
-          </div>
+            card.overlaySubtitle || ''
+          )}" placeholder="默认不显示字幕，如需可手动填写" />
         </div>
       `;
 
@@ -1346,6 +1818,28 @@
           persistState();
         });
       });
+
+      box.querySelectorAll('[data-dice-card]').forEach((diceBtn) => {
+        diceBtn.addEventListener('click', () => {
+          const field = diceBtn.getAttribute('data-dice-card');
+          if (!field || !global.LayaDefaults || !global.LayaDefaults.rollRandomFieldValue) return;
+          const nextVal = global.LayaDefaults.rollRandomFieldValue(field, card[field], state);
+          if (nextVal !== undefined && nextVal !== null) {
+            card[field] = nextVal;
+            const targetInp = box.querySelector(`[data-field="${field}"]`);
+            if (targetInp) targetInp.value = nextVal;
+            persistState();
+            requestStageRender();
+          }
+        });
+      });
+
+      const aiRecBtn = box.querySelector('[data-act="aiRecognize"]');
+      if (aiRecBtn) {
+        aiRecBtn.addEventListener('click', () => {
+          autoRecognizeStoreCardTitle(card, entry ? entry.el : null, card.mediaName || '');
+        });
+      }
 
       const uploadInp = box.querySelector('[data-act="upload"]');
       uploadInp.addEventListener('change', (e) => {
@@ -1404,6 +1898,34 @@
     });
   }
 
+  async function autoRecognizeStoreCardTitle(card, mediaEl, displayName, silent) {
+    if (!card || !global.LayaAIExporter || typeof global.LayaAIExporter.recognizeSingleMediaTitleWithAI !== 'function') {
+      return;
+    }
+    try {
+      const res = await global.LayaAIExporter.recognizeSingleMediaTitleWithAI({
+        mediaEl,
+        fileName: displayName || card.mediaName || '',
+        isTraditional: state.posterLang === 'zh-TW',
+        aiConfig: state.aiConfig
+      });
+      if (res && res.footerTitle) {
+        card.footerTitle = res.footerTitle;
+        const cardInp = document.querySelector(`#feedCardsEditorList [data-card-id="${card.id}"] [data-field="footerTitle"]`);
+        if (cardInp) cardInp.value = card.footerTitle;
+        persistState();
+        requestStageRender();
+        if (!silent) {
+          showToast(
+            res.usedRemoteAI
+              ? `🤖 AI 已识别画面并生成标题：「${card.footerTitle}」`
+              : `✨ 已自动识别生成标题：「${card.footerTitle}」`
+          );
+        }
+      }
+    } catch (_) {}
+  }
+
   function mountCardMediaBlob(card, blobOrFile, displayName, shouldSaveToDB) {
     disposeCardMedia(card.id);
     const url = URL.createObjectURL(blobOrFile);
@@ -1417,6 +1939,13 @@
       video.muted = false;
       video.preload = 'auto';
 
+      let recognizedOnce = false;
+      const runVidRecognize = () => {
+        if (!shouldSaveToDB || recognizedOnce) return;
+        recognizedOnce = true;
+        autoRecognizeStoreCardTitle(card, video, displayName);
+      };
+
       video.addEventListener('loadeddata', () => {
         video.play().catch(() => {
           video.muted = true;
@@ -1424,18 +1953,31 @@
         });
         renderDynamicFeedCards();
         updateExportModeHint();
+        requestStageRender();
+        runVidRecognize();
       });
 
-      video.addEventListener('play', () => renderDynamicFeedCards());
-      video.addEventListener('pause', () => renderDynamicFeedCards());
+      if (shouldSaveToDB) {
+        setTimeout(runVidRecognize, 650);
+      }
+
+      video.addEventListener('play', () => {
+        renderDynamicFeedCards();
+        requestStageRender();
+      });
+      video.addEventListener('pause', () => {
+        renderDynamicFeedCards();
+        requestStageRender();
+      });
 
       mediaRegistry.cardMedia[card.id] = { type: 'video', el: video, url };
       card.mediaType = 'video';
       card.mediaName = displayName;
+      requestStageRender();
       if (shouldSaveToDB) {
         persistMedia(`cardMedia:${card.id}`, blobOrFile, { fileName: displayName });
         persistState();
-        showToast(`🎬 已载入并自动保存视频「${displayName}」`);
+        showToast(`🎬 已载入视频「${displayName}」，正在自动识别标题…`);
       }
     } else {
       const img = new Image();
@@ -1445,10 +1987,11 @@
         card.mediaName = displayName;
         renderDynamicFeedCards();
         updateExportModeHint();
+        requestStageRender();
         if (shouldSaveToDB) {
           persistMedia(`cardMedia:${card.id}`, blobOrFile, { fileName: displayName });
           persistState();
-          showToast(`🖼️ 已载入并自动保存图片「${displayName}」`);
+          autoRecognizeStoreCardTitle(card, img, displayName);
         }
       };
       img.src = url;
@@ -1730,12 +2273,130 @@
   }
 
   function handleDirectCanvasClick(hit, clientX, clientY) {
+    if (hit) {
+      syncRightPanelToCanvasHit(hit);
+    }
     if (!hit || hit.kind === 'module') {
       closeInlineEditor();
       return;
     }
     const key = hit.key;
     activeInlineFontKey = key;
+
+    if (key.startsWith('custom_el_')) {
+      const elId = key.slice('custom_el_'.length);
+      const customEl = (state.customElements || []).find((it) => it && it.id === elId);
+      if (!customEl) return;
+
+      if (customEl.type === 'image') {
+        openInlineEditorPopover({
+          title: '自定义图片贴纸控制',
+          initialValue: null,
+          clientX,
+          clientY,
+          extraButtons: [
+            {
+              text: '🖼️ 从图库换图',
+              primary: true,
+              onClick: () => {
+                closeInlineEditor();
+                openAvatarLibraryModal({
+                  title: '🖼️ 为贴纸更换图库图片',
+                  initialCat: customEl.libCategory || 'beauties',
+                  initialIdx: customEl.libIndex || 0,
+                  onSelect: (cat, idx) => {
+                    delete mediaRegistry.customElementImages[customEl.id];
+                    removePersistedMedia(`customElImg:${customEl.id}`);
+                    customEl.libCategory = cat;
+                    customEl.libIndex = idx;
+                    renderCustomElementsList();
+                    persistState();
+                  },
+                  onUploadFile: (file) => {
+                    loadBlobAsImage(file, (img) => {
+                      mediaRegistry.customElementImages[customEl.id] = img;
+                      persistMedia(`customElImg:${customEl.id}`, file);
+                      renderCustomElementsList();
+                    });
+                  }
+                });
+              }
+            },
+            {
+              text: '📁 上传本地图片',
+              onClick: () => {
+                closeInlineEditor();
+                triggerDirectFileUpload('image/*', (file) => {
+                  loadBlobAsImage(file, (img) => {
+                    mediaRegistry.customElementImages[customEl.id] = img;
+                    persistMedia(`customElImg:${customEl.id}`, file);
+                    renderCustomElementsList();
+                  });
+                });
+              }
+            },
+            {
+              text: '📐 切圆角/圆形',
+              onClick: () => {
+                cycleCustomElementStyle(customEl.id);
+              }
+            },
+            {
+              text: '📋 复制',
+              onClick: () => duplicateCustomElement(customEl.id)
+            },
+            {
+              text: '🗑️ 彻底移除',
+              onClick: () => {
+                closeInlineEditor();
+                removeCustomElement(customEl.id);
+              }
+            }
+          ]
+        });
+        return;
+      }
+
+      openInlineEditorPopover({
+        title: '编辑自定义元素文字 / 样式',
+        initialValue: customEl.text || '',
+        multiline: customEl.type === 'text',
+        clientX,
+        clientY,
+        onInput: (val) => {
+          customEl.text = val;
+          renderCustomElementsList();
+          renderPerTextFontList();
+        },
+        extraButtons: [
+          {
+            text: '🎨 换样式',
+            primary: true,
+            onClick: () => cycleCustomElementStyle(customEl.id)
+          },
+          {
+            text: '↻ 旋转45°',
+            onClick: () => {
+              customEl.rotation = ((Number(customEl.rotation) || 0) + 45) % 360;
+              renderCustomElementsList();
+              persistState();
+            }
+          },
+          {
+            text: '📋 复制',
+            onClick: () => duplicateCustomElement(customEl.id)
+          },
+          {
+            text: '🗑️ 彻底移除',
+            onClick: () => {
+              closeInlineEditor();
+              removeCustomElement(customEl.id);
+            }
+          }
+        ]
+      });
+      return;
+    }
 
     if (key === 'play_icon') {
       closeInlineEditor();
@@ -2213,12 +2874,18 @@
   }
 
   function applyGeneratedCopyToCards(targetCards, generatedList) {
+    const withOverlay = Boolean(state.aiConfig && state.aiConfig.includeOverlayText);
     targetCards.forEach((card, i) => {
       const g = generatedList[i % generatedList.length];
       if (!g) return;
-      card.overlayTitle = g.overlayTitle;
-      card.overlaySubtitle = g.overlaySubtitle;
-      card.footerTitle = g.footerTitle;
+      if (withOverlay) {
+        card.overlayTitle = g.overlayTitle || '';
+        card.overlaySubtitle = g.overlaySubtitle || '';
+      } else {
+        card.overlayTitle = '';
+        card.overlaySubtitle = '';
+      }
+      card.footerTitle = g.footerTitle || card.footerTitle;
       if (g.likes) card.likes = g.likes;
     });
     renderDynamicFeedCards();
@@ -2230,6 +2897,7 @@
     const btnPanel = document.getElementById('btnAiCopyPanel');
     const targetCards = getTargetCardsForAI();
     if (!targetCards.length) return;
+    const includeOverlayText = Boolean(state.aiConfig && state.aiConfig.includeOverlayText);
 
     const resolvedAi =
       global.LayaProfileCenter && typeof global.LayaProfileCenter.resolveGeminiConfig === 'function'
@@ -2243,10 +2911,11 @@
       const generated = global.LayaAIExporter.generateLocalFallbackCopy(
         state.aiConfig.topicPrompt,
         targetCards.length,
-        state.posterLang === 'zh-TW'
+        state.posterLang === 'zh-TW',
+        includeOverlayText
       );
       applyGeneratedCopyToCards(targetCards, generated);
-      showToast('✨ 已生成精选短视频文案（可在「高级 API 设置」填入密钥启用云端大模型）');
+      showToast('✨ 已生成短视频底部标题（可在「高级 API 设置」填入密钥启用云端大模型）');
       return;
     }
 
@@ -2262,18 +2931,20 @@
         topicPrompt: state.aiConfig.topicPrompt,
         targetCards,
         mediaRegistry,
-        isTraditional: state.posterLang === 'zh-TW'
+        isTraditional: state.posterLang === 'zh-TW',
+        includeOverlayText
       });
       applyGeneratedCopyToCards(targetCards, generated);
-      showToast('✨ Gemini AI 已自动生成卡片标题与字幕');
+      showToast(includeOverlayText ? '✨ Gemini AI 已自动生成卡片标题与字幕' : '✨ Gemini AI 已识图生成卡片底部标题');
     } catch (err) {
       const fallback = global.LayaAIExporter.generateLocalFallbackCopy(
         state.aiConfig.topicPrompt,
         targetCards.length,
-        state.posterLang === 'zh-TW'
+        state.posterLang === 'zh-TW',
+        includeOverlayText
       );
       applyGeneratedCopyToCards(targetCards, fallback);
-      showToast(`AI 接口提示（${err.message}），已填入精选灵感文案`, true);
+      showToast(`AI 接口提示（${err.message}），已填入精选灵感标题`, true);
     } finally {
       btnTop.disabled = false;
       btnPanel.disabled = false;
@@ -2322,7 +2993,7 @@
   }
 
   // ===========================================================================
-  // 双栏工作台切换（商店截图生成器 ⇄ Laya 风格个人中心）
+  // 双栏工作台切换（商店截图生成器 ⇄ 个人中心）
   // ===========================================================================
   function applyWorkspaceMode(mode, skipSave) {
     const nextMode = mode === 'profile' ? 'profile' : 'store';
@@ -2351,11 +3022,8 @@
     if (shell) shell.classList.toggle('is-profile-mode', isProfile);
 
     if (dragScopeSel) {
-      dragScopeSel.disabled = isProfile;
-      if (isProfile) {
-        dragScopeSel.value = 'element';
-        interaction.dragMode = 'element';
-      }
+      dragScopeSel.disabled = false;
+      interaction.dragMode = dragScopeSel.value === 'module' ? 'module' : 'element';
     }
 
     if (interaction) {
@@ -2374,9 +3042,323 @@
     }
     zoomMode = 'fit';
     fitStageToViewport();
+    renderCustomElementsList();
     renderPerTextFontList();
     updateExportModeHint();
     if (!skipSave) persistState();
+  }
+
+  function bindCustomElementEvents() {
+    const pop = document.getElementById('quickAddPopover');
+    const toggleBtn = document.getElementById('btnToggleQuickAdd');
+    if (toggleBtn && pop) {
+      toggleBtn.addEventListener('click', (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        pop.classList.toggle('hidden');
+      });
+    }
+
+    document.querySelectorAll('[data-add-el]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const mode = btn.getAttribute('data-add-el');
+        if (pop) pop.classList.add('hidden');
+        if (mode === 'image-upload') {
+          triggerDirectFileUpload('image/*', (file) => addCustomElement('image', { file }));
+        } else if (mode === 'image-lib') {
+          openAvatarLibraryModal({
+            title: '🖼️ 挑一张高清图片作为贴纸添加到当前画布',
+            initialCat: 'beauties',
+            initialIdx: 0,
+            onSelect: (cat, idx) => addCustomElement('image', { libCategory: cat, libIndex: idx }),
+            onUploadFile: (file) => addCustomElement('image', { file })
+          });
+        } else {
+          addCustomElement(mode);
+        }
+      });
+    });
+
+    const quickRestoreBtn = document.getElementById('btnQuickRestoreTop');
+    if (quickRestoreBtn) {
+      quickRestoreBtn.addEventListener('click', () => {
+        const keys = Object.keys(state.hiddenElements || {});
+        if (!keys.length) {
+          showToast('当前画布没有被删除/隐藏的元素');
+          return;
+        }
+        const lastKey = keys[keys.length - 1];
+        restoreElementByKey(lastKey);
+      });
+    }
+
+    const getSelectedCustomEl = () => {
+      const sel = interaction && interaction.uiState.selectedBox;
+      if (!sel || !sel.key || !sel.key.startsWith('custom_el_')) return null;
+      const elId = sel.key.slice('custom_el_'.length);
+      return (state.customElements || []).find((it) => it && it.id === elId) || null;
+    };
+
+    const sDown = document.getElementById('btnCustomElScaleDown');
+    if (sDown) {
+      sDown.addEventListener('click', () => {
+        const el = getSelectedCustomEl();
+        if (!el) return;
+        el.scale = Math.max(0.3, Math.round(((Number(el.scale) || 1) - 0.15) * 100) / 100);
+        renderCustomElementsList();
+        persistState();
+      });
+    }
+    const sUp = document.getElementById('btnCustomElScaleUp');
+    if (sUp) {
+      sUp.addEventListener('click', () => {
+        const el = getSelectedCustomEl();
+        if (!el) return;
+        el.scale = Math.min(3.5, Math.round(((Number(el.scale) || 1) + 0.15) * 100) / 100);
+        renderCustomElementsList();
+        persistState();
+      });
+    }
+    const rBtn = document.getElementById('btnCustomElRotate');
+    if (rBtn) {
+      rBtn.addEventListener('click', () => {
+        const el = getSelectedCustomEl();
+        if (!el) return;
+        el.rotation = ((Number(el.rotation) || 0) + 45) % 360;
+        renderCustomElementsList();
+        persistState();
+      });
+    }
+    const stBtn = document.getElementById('btnCustomElCycleStyle');
+    if (stBtn) {
+      stBtn.addEventListener('click', () => {
+        const el = getSelectedCustomEl();
+        if (el) cycleCustomElementStyle(el.id);
+      });
+    }
+    const dupBtn = document.getElementById('btnCustomElDuplicate');
+    if (dupBtn) {
+      dupBtn.addEventListener('click', () => {
+        const el = getSelectedCustomEl();
+        if (el) duplicateCustomElement(el.id);
+      });
+    }
+
+    const addStoreTopBtn = document.getElementById('btnAddStoreTopTab');
+    if (addStoreTopBtn) {
+      addStoreTopBtn.addEventListener('click', () => {
+        const isTrad = state.posterLang === 'zh-TW';
+        state.navModule.topTabs.push(isTrad ? '精選' : '精选');
+        renderDynamicNavControls();
+        renderPerTextFontList();
+        persistState();
+        showToast('＋ 已新增顶部内容标签');
+      });
+    }
+    const addStoreBotBtn = document.getElementById('btnAddStoreBotTab');
+    if (addStoreBotBtn) {
+      addStoreBotBtn.addEventListener('click', () => {
+        const isTrad = state.posterLang === 'zh-TW';
+        state.navModule.bottomTabs.push({
+          id: `b_${Date.now()}`,
+          label: isTrad ? '頻道' : '频道',
+          iconKey: 'bot_discover',
+          customIconKey: null
+        });
+        renderDynamicNavControls();
+        renderPerTextFontList();
+        persistState();
+        showToast('＋ 已新增底部导航项');
+      });
+    }
+  }
+
+  function addCustomElement(type, opts) {
+    if (!Array.isArray(state.customElements)) state.customElements = [];
+    const ws = state.activeWorkspace === 'profile' ? 'profile' : 'store';
+    const isTrad = state.posterLang === 'zh-TW';
+    const conv = (s) => (isTrad && global.LayaPosterLang ? global.LayaPosterLang.convertString(s, true) : s);
+    const sameCount = state.customElements.filter((it) => (it.workspace || 'store') === ws).length;
+
+    let baseX = 960 + ((sameCount % 5) - 2) * 38;
+    let baseY = 520 + (sameCount % 4) * 34;
+    if (ws === 'profile') {
+      const sy =
+        state.profileCenter && state.profileCenter.viewportMode === 'mobile'
+          ? Number(state.profileCenter.scrollY) || 0
+          : 0;
+      baseX = 540 + ((sameCount % 5) - 2) * 30;
+      baseY = sy + 560 + (sameCount % 4) * 34;
+    }
+
+    const extra = opts || {};
+    const templates = {
+      text: { text: conv('✨ 点击修改自由文字'), color: '#ffffff', bgStyle: 'glass', w: 280, h: 68 },
+      badge: { text: conv('🎙️ 在线连麦中'), color: '#ffffff', bgStyle: 'purple', w: 220, h: 52 },
+      arrow: { text: conv('看这里'), color: '#fb7185', bgStyle: 'red', rotation: -35, w: 160, h: 64 },
+      box: { text: conv('重点圈选'), color: '#ffffff', bgStyle: 'red', w: 280, h: 110 },
+      image: {
+        text: '',
+        shape: 'round',
+        w: 180,
+        h: 180,
+        libCategory: extra.libCategory || 'beauties',
+        libIndex: extra.libIndex || 0
+      }
+    };
+    const tpl = templates[type] || templates.text;
+    const newEl = Object.assign(
+      {
+        id: `ce_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        workspace: ws,
+        type: type || 'text',
+        x: baseX,
+        y: baseY,
+        scale: 1,
+        rotation: 0,
+        color: '#ffffff',
+        bgStyle: 'purple',
+        shape: 'round'
+      },
+      tpl
+    );
+
+    state.customElements.push(newEl);
+    if (extra.file) {
+      loadBlobAsImage(extra.file, (img) => {
+        mediaRegistry.customElementImages[newEl.id] = img;
+        persistMedia(`customElImg:${newEl.id}`, extra.file);
+        renderCustomElementsList();
+      });
+    }
+    renderCustomElementsList();
+    renderPerTextFontList();
+    persistState();
+    showToast(`➕ 已添加自定义${type === 'image' ? '贴纸' : type === 'arrow' ? '指引箭头' : type === 'box' ? '高亮框' : type === 'badge' ? '胶囊标签' : '文字'}（可直接在画布拖动）`);
+    return newEl;
+  }
+
+  function removeCustomElement(elId) {
+    if (!Array.isArray(state.customElements)) return;
+    const idx = state.customElements.findIndex((it) => it && it.id === elId);
+    if (idx === -1) return;
+    state.customElements.splice(idx, 1);
+    delete mediaRegistry.customElementImages[elId];
+    removePersistedMedia(`customElImg:${elId}`);
+    const key = `custom_el_${elId}`;
+    if (state.offsets) delete state.offsets[key];
+    if (state.fontSizes) delete state.fontSizes[key];
+    if (state.hiddenElements) delete state.hiddenElements[key];
+    if (interaction && interaction.uiState.selectedBox && interaction.uiState.selectedBox.key === key) {
+      interaction.uiState.selectedBox = null;
+    }
+    updateSelectedElementBar();
+    renderHiddenElementsManager();
+    renderCustomElementsList();
+    renderPerTextFontList();
+    persistState();
+    showToast('🗑️ 已彻底移除自定义元素');
+  }
+
+  function duplicateCustomElement(elId) {
+    const src = (state.customElements || []).find((it) => it && it.id === elId);
+    if (!src) return;
+    const copy = JSON.parse(JSON.stringify(src));
+    copy.id = `ce_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    copy.x = (Number(src.x) || 400) + 38;
+    copy.y = (Number(src.y) || 300) + 38;
+    if (mediaRegistry.customElementImages[src.id]) {
+      mediaRegistry.customElementImages[copy.id] = mediaRegistry.customElementImages[src.id];
+    }
+    state.customElements.push(copy);
+    renderCustomElementsList();
+    renderPerTextFontList();
+    persistState();
+    showToast('📋 已复制同款自定义元素');
+  }
+
+  function cycleCustomElementStyle(elId) {
+    const el = (state.customElements || []).find((it) => it && it.id === elId);
+    if (!el) return;
+    if (el.type === 'image') {
+      const shapes = ['round', 'circle', 'raw'];
+      el.shape = shapes[(shapes.indexOf(el.shape || 'round') + 1) % shapes.length];
+    } else if (el.type === 'arrow') {
+      const cols = ['#fb7185', '#c084fc', '#38bdf8', '#34d399', '#facc15'];
+      el.color = cols[(cols.indexOf(el.color || '#fb7185') + 1) % cols.length];
+    } else if (el.type === 'box') {
+      const bgs = ['red', 'purple', 'pink', 'green'];
+      el.bgStyle = bgs[(bgs.indexOf(el.bgStyle || 'red') + 1) % bgs.length];
+    } else if (el.type === 'badge') {
+      const bgs = ['purple', 'pink', 'green', 'red', 'glass'];
+      el.bgStyle = bgs[(bgs.indexOf(el.bgStyle || 'purple') + 1) % bgs.length];
+    } else {
+      const bgs = ['glass', 'purple', 'pink', 'red', 'none'];
+      el.bgStyle = bgs[(bgs.indexOf(el.bgStyle || 'glass') + 1) % bgs.length];
+    }
+    renderCustomElementsList();
+    persistState();
+  }
+
+  function renderCustomElementsList() {
+    const container = document.getElementById('customElementsEditorList');
+    if (!container) return;
+    container.innerHTML = '';
+    const ws = state.activeWorkspace === 'profile' ? 'profile' : 'store';
+    const items = (state.customElements || []).filter((it) => it && (it.workspace || 'store') === ws);
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.style.fontSize = '11px';
+      empty.style.color = 'rgba(203, 194, 232, 0.6)';
+      empty.textContent = '暂无自由添加元素，点上方「＋ 文字/胶囊/箭头/高亮框/贴图」即可加入画布自由摆放';
+      container.appendChild(empty);
+      return;
+    }
+
+    const typeBadges = { text: '📝 文字', badge: '🏷️ 胶囊', arrow: '↗️ 箭头', box: '⭕ 高亮框', image: '🖼️ 贴图' };
+    items.forEach((el) => {
+      const key = `custom_el_${el.id}`;
+      const isHid = Boolean(state.hiddenElements && state.hiddenElements[key]);
+      const row = document.createElement('div');
+      row.className = 'custom-el-row';
+      row.setAttribute('data-ce-id', el.id);
+      row.innerHTML = `
+        <div class="custom-el-row-top">
+          <span class="card-badge">${typeBadges[el.type] || '🧩 元素'} · ${Math.round((Number(el.scale) || 1) * 100)}%</span>
+          <div class="custom-el-row-actions">
+            <button type="button" class="btn-dark-sm" data-ce="style">样式</button>
+            <button type="button" class="btn-dark-sm" data-ce="rot">旋转</button>
+            <button type="button" class="btn-dark-sm" data-ce="dup">复制</button>
+            <button type="button" class="mini-clear-btn" data-ce="vis">${isHid ? '显示' : '隐藏'}</button>
+            <button type="button" class="btn-icon-danger" data-ce="del">删除</button>
+          </div>
+        </div>
+        ${
+          el.type !== 'image'
+            ? `<input type="text" class="ctrl-input" data-ce="text" value="${escapeHtml(el.text || '')}" placeholder="输入显示文字（留空即不显示）" />`
+            : ''
+        }
+      `;
+      const txtInp = row.querySelector('[data-ce="text"]');
+      if (txtInp) {
+        txtInp.addEventListener('input', () => {
+          el.text = txtInp.value;
+          persistState();
+        });
+      }
+      row.querySelector('[data-ce="style"]').addEventListener('click', () => cycleCustomElementStyle(el.id));
+      row.querySelector('[data-ce="rot"]').addEventListener('click', () => {
+        el.rotation = ((Number(el.rotation) || 0) + 45) % 360;
+        renderCustomElementsList();
+        persistState();
+      });
+      row.querySelector('[data-ce="dup"]').addEventListener('click', () => duplicateCustomElement(el.id));
+      row.querySelector('[data-ce="vis"]').addEventListener('click', () => {
+        toggleElementVisibility(key, `${typeBadges[el.type] || '自定义元素'}${el.text ? `「${el.text.slice(0, 8)}」` : ''}`);
+        renderCustomElementsList();
+      });
+      row.querySelector('[data-ce="del"]').addEventListener('click', () => removeCustomElement(el.id));
+      container.appendChild(row);
+    });
   }
 
   function syncProfileViewportUI() {
@@ -2390,7 +3372,7 @@
       btn.addEventListener('click', () => {
         const m = btn.getAttribute('data-workspace-mode');
         applyWorkspaceMode(m);
-        showToast(m === 'profile' ? '👤 已切换至「Laya 风格个人中心」工作台' : '🏪 已切换至「Laya 商店截图生成器」');
+        showToast(m === 'profile' ? '👤 已切换至「个人中心」工作台' : '🏪 已切换至「商店截图生成器」');
       });
     });
 
@@ -2720,13 +3702,17 @@
       btnAddCmt.addEventListener('click', () => {
         const pc = state.profileCenter;
         const av = global.LayaProfileCenter.pickRandomAvatarFromLibrary('male');
+        const locStr =
+          global.LayaDefaults && typeof global.LayaDefaults.rollRandomFieldValue === 'function'
+            ? global.LayaDefaults.rollRandomFieldValue('commentMeta', '', state) || '刚刚 · 台北'
+            : '刚刚 · 台北';
         pc.commentSection.items.push({
           id: `c_${Date.now()}`,
-          nickname: 'Laya 好友',
+          nickname: '热心网友',
           avatarCategory: av.category,
           avatarIndex: av.index,
           text: '刚看完你的新动态，这氛围感也太棒了吧！',
-          timeLoc: '刚刚 · 上海',
+          timeLoc: locStr,
           likes: String(Math.floor(Math.random() * 90 + 12)),
           authorReply: ''
         });
@@ -2734,6 +3720,71 @@
         renderPerTextFontList();
         persistState();
         showToast('＋ 已新增一条互动评论');
+      });
+    }
+
+    const btnAddExtraBadge = document.getElementById('btnAddProfExtraBadge');
+    if (btnAddExtraBadge) {
+      btnAddExtraBadge.addEventListener('click', () => {
+        const u = state.profileCenter.user;
+        if (!Array.isArray(u.extraBadges)) u.extraBadges = [];
+        const isTrad = state.posterLang === 'zh-TW';
+        u.extraBadges.push({
+          id: `eb_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          text: isTrad ? '✨ 聲音認證' : '✨ 声音认证',
+          style: 'purple'
+        });
+        renderProfileExtraBadgesEditor();
+        renderPerTextFontList();
+        persistState();
+        showToast('＋ 已新增个性身份徽章');
+      });
+    }
+
+    const btnAddStat = document.getElementById('btnAddProfStat');
+    if (btnAddStat) {
+      btnAddStat.addEventListener('click', () => {
+        const list = state.profileCenter.stats.items;
+        const isTrad = state.posterLang === 'zh-TW';
+        list.push({
+          id: `st_${Date.now()}`,
+          num: '999',
+          label: isTrad ? '人氣值' : '人气值'
+        });
+        renderProfileStatsEditor();
+        renderPerTextFontList();
+        persistState();
+        showToast('＋ 已新增统计数据项');
+      });
+    }
+
+    const btnAddProfTab = document.getElementById('btnAddProfTab');
+    if (btnAddProfTab) {
+      btnAddProfTab.addEventListener('click', () => {
+        const isTrad = state.posterLang === 'zh-TW';
+        state.profileCenter.contentTabs.tabs.push(isTrad ? '精選' : '精选');
+        renderProfileTabsEditor();
+        renderPerTextFontList();
+        persistState();
+        showToast('＋ 已新增内容分区标签');
+      });
+    }
+
+    const btnAddProfBotTab = document.getElementById('btnAddProfBotTab');
+    if (btnAddProfBotTab) {
+      btnAddProfBotTab.addEventListener('click', () => {
+        const isTrad = state.posterLang === 'zh-TW';
+        state.profileCenter.bottomNav.tabs.push({
+          id: `pbn_${Date.now()}`,
+          label: isTrad ? '頻道' : '频道',
+          assetActive: 'tab_1',
+          assetInactive: 'tab_1-1',
+          badge: ''
+        });
+        renderProfileBottomNavEditor();
+        renderPerTextFontList();
+        persistState();
+        showToast('＋ 已新增底部导航项');
       });
     }
   }
@@ -2751,7 +3802,7 @@
       showPlayIcon: false,
       overlayTitle: '',
       watchedTag: '',
-      title: conv(`今日份 Laya 动态分享 #${numIdx} ✨`),
+      title: conv(`今日份动态分享 #${numIdx} ✨`),
       hotComment: conv('💬 网友热评：这状态直接拉满！'),
       publishTime: conv('刚刚'),
       likes: String(Math.floor(Math.random() * 400 + 40)),
@@ -2762,6 +3813,7 @@
   function renderProfilePanelEditors() {
     if (!state.profileCenter) return;
     refreshProfileAvatarPreview();
+    renderProfileExtraBadgesEditor();
     renderProfileStatsEditor();
     renderProfileTabsEditor();
     renderProfilePostsEditor();
@@ -2769,26 +3821,94 @@
     renderProfileBottomNavEditor();
   }
 
+  function renderProfileExtraBadgesEditor() {
+    const container = document.getElementById('profExtraBadgesList');
+    if (!container || !state.profileCenter || !state.profileCenter.user) return;
+    container.innerHTML = '';
+    const list = state.profileCenter.user.extraBadges || [];
+    list.forEach((b, idx) => {
+      if (!b || !b.id) return;
+      const hidKey = `prof_extra_badge_${b.id}`;
+      const isHid = Boolean(state.hiddenElements && state.hiddenElements[hidKey]);
+      const row = document.createElement('div');
+      row.className = 'inline-item-row';
+      row.innerHTML = `
+        <input type="text" class="ctrl-input" data-part="text" value="${escapeHtml(b.text || '')}" placeholder="徽章文字" />
+        <select class="ctrl-select" data-part="style" style="width:74px;flex:0 0 74px;padding:4px 6px;font-size:11px;">
+          <option value="purple" ${b.style === 'purple' ? 'selected' : ''}>紫标</option>
+          <option value="pink" ${b.style === 'pink' ? 'selected' : ''}>粉标</option>
+          <option value="blue" ${b.style === 'blue' ? 'selected' : ''}>蓝标</option>
+          <option value="glass" ${b.style === 'glass' ? 'selected' : ''}>玻璃</option>
+        </select>
+        <button type="button" class="mini-clear-btn" data-act="vis">${isHid ? '显示' : '隐藏'}</button>
+        <button type="button" class="btn-icon-danger" data-act="del">删</button>
+      `;
+      row.querySelector('[data-part="text"]').addEventListener('input', (e) => {
+        b.text = e.target.value;
+        persistState();
+      });
+      row.querySelector('[data-part="style"]').addEventListener('change', (e) => {
+        b.style = e.target.value;
+        persistState();
+      });
+      row.querySelector('[data-act="vis"]').addEventListener('click', () => {
+        toggleElementVisibility(hidKey, `个性徽章：${b.text || idx + 1}`);
+        renderProfileExtraBadgesEditor();
+      });
+      row.querySelector('[data-act="del"]').addEventListener('click', () => {
+        list.splice(idx, 1);
+        if (state.hiddenElements) delete state.hiddenElements[hidKey];
+        if (state.offsets) delete state.offsets[hidKey];
+        renderHiddenElementsManager();
+        renderProfileExtraBadgesEditor();
+        renderPerTextFontList();
+        persistState();
+      });
+      container.appendChild(row);
+    });
+  }
+
   function renderProfileStatsEditor() {
     const container = document.getElementById('profStatsEditorList');
     if (!container || !state.profileCenter) return;
     container.innerHTML = '';
     const items = (state.profileCenter.stats && state.profileCenter.stats.items) || [];
-    items.forEach((st) => {
+    items.forEach((st, idx) => {
+      const canDel = items.length > 1;
       const row = document.createElement('div');
       row.className = 'inline-item-row';
+      row.setAttribute('data-stat-idx', String(idx));
       row.innerHTML = `
-        <input type="text" class="ctrl-input" data-part="num" value="${escapeHtml(st.num)}" placeholder="数值" style="max-width:110px;font-weight:700;" />
+        <input type="text" class="ctrl-input" data-part="num" value="${escapeHtml(st.num)}" placeholder="数值" style="max-width:96px;font-weight:700;" />
+        <button type="button" class="field-dice-btn" data-dice-stat="num" title="随机数值" style="margin-left:0;">🎲</button>
         <input type="text" class="ctrl-input" data-part="label" value="${escapeHtml(st.label)}" placeholder="标签词" />
+        ${canDel ? '<button type="button" class="btn-icon-danger" data-act="delStat">删</button>' : ''}
       `;
       row.querySelector('[data-part="num"]').addEventListener('input', (e) => {
         st.num = e.target.value;
         persistState();
       });
+      row.querySelector('[data-dice-stat="num"]').addEventListener('click', () => {
+        if (!global.LayaDefaults || !global.LayaDefaults.rollRandomFieldValue) return;
+        const nv = global.LayaDefaults.rollRandomFieldValue('likes', st.num, state);
+        st.num = nv;
+        row.querySelector('[data-part="num"]').value = nv;
+        persistState();
+        requestStageRender();
+      });
       row.querySelector('[data-part="label"]').addEventListener('input', (e) => {
         st.label = e.target.value;
         persistState();
       });
+      const delBtn = row.querySelector('[data-act="delStat"]');
+      if (delBtn) {
+        delBtn.addEventListener('click', () => {
+          items.splice(idx, 1);
+          renderProfileStatsEditor();
+          renderPerTextFontList();
+          persistState();
+        });
+      }
       container.appendChild(row);
     });
   }
@@ -2802,12 +3922,14 @@
       const isAct = idx === Number(ct.activeIndex);
       const hidKey = `prof_tab_${idx}`;
       const isHid = Boolean(state.hiddenElements && state.hiddenElements[hidKey]);
+      const canDel = ct.tabs.length > 1;
       const row = document.createElement('div');
       row.className = 'inline-item-row';
       row.innerHTML = `
         <button type="button" class="pill-radio ${isAct ? 'active' : ''}">${isAct ? '★ 高亮' : '设高亮'}</button>
         <input type="text" class="ctrl-input" value="${escapeHtml(lbl)}" />
         <button type="button" class="mini-clear-btn">${isHid ? '显示' : '隐藏'}</button>
+        ${canDel ? '<button type="button" class="btn-icon-danger" data-act="delProfTab">删</button>' : ''}
       `;
       row.querySelector('.pill-radio').addEventListener('click', () => {
         ct.activeIndex = idx;
@@ -2821,6 +3943,18 @@
       row.querySelector('.mini-clear-btn').addEventListener('click', () => {
         toggleElementVisibility(hidKey, `分区标签：${lbl}`);
       });
+      const delBtn = row.querySelector('[data-act="delProfTab"]');
+      if (delBtn) {
+        delBtn.addEventListener('click', () => {
+          ct.tabs.splice(idx, 1);
+          if (ct.activeIndex >= ct.tabs.length) {
+            ct.activeIndex = Math.max(0, ct.tabs.length - 1);
+          }
+          renderProfileTabsEditor();
+          renderPerTextFontList();
+          persistState();
+        });
+      }
       container.appendChild(row);
     });
   }
@@ -2841,6 +3975,7 @@
 
       const box = document.createElement('div');
       box.className = 'feed-card-editor';
+      box.setAttribute('data-post-id', post.id);
       box.innerHTML = `
         <div class="feed-card-editor-head">
           <span class="card-badge">作品 ${idx + 1}</span>
@@ -2884,43 +4019,43 @@
         }
 
         <div class="field-group">
-          <label class="field-label">作品标题文案（可由 AI 识别画面生成）</label>
+          <label class="field-label"><span>作品标题文案（可由 AI 识别画面生成）</span><button type="button" class="field-dice-btn" data-dice-post="title" data-pool="footerTitle" title="随机标题">🎲</button></label>
           <textarea class="ctrl-textarea" rows="2" data-field="title">${escapeHtml(post.title || '')}</textarea>
         </div>
 
         <div class="field-group">
-          <label class="field-label">卡片下方热评摘要</label>
+          <label class="field-label"><span>卡片下方热评摘要</span><button type="button" class="field-dice-btn" data-dice-post="hotComment" data-pool="commentText" title="随机热评">🎲</button></label>
           <input type="text" class="ctrl-input" data-field="hotComment" value="${escapeHtml(post.hotComment || '')}" />
         </div>
 
         <div class="grid-3-col">
           <div class="field-group">
-            <label class="field-label">左上角标</label>
+            <label class="field-label"><span>左上角标</span><button type="button" class="field-dice-btn" data-dice-post="pinBadge" data-pool="pinBadge" title="随机角标">🎲</button></label>
             <input type="text" class="ctrl-input" data-field="pinBadge" value="${escapeHtml(post.pinBadge || '')}" placeholder="如：置顶" />
           </div>
           <div class="field-group">
-            <label class="field-label">发布时间</label>
+            <label class="field-label"><span>发布时间</span><button type="button" class="field-dice-btn" data-dice-post="publishTime" data-pool="publishTime" title="随机时间">🎲</button></label>
             <input type="text" class="ctrl-input" data-field="publishTime" value="${escapeHtml(post.publishTime || '')}" />
           </div>
           <div class="field-group">
-            <label class="field-label">♡ 点赞数</label>
+            <label class="field-label"><span>♡ 点赞数</span><button type="button" class="field-dice-btn" data-dice-post="likes" data-pool="likes" title="随机赞数">🎲</button></label>
             <input type="text" class="ctrl-input" data-field="likes" value="${escapeHtml(post.likes || '')}" />
           </div>
         </div>
 
         <div class="grid-2-col">
           <div class="field-group">
-            <label class="field-label">画面可选花字</label>
+            <label class="field-label"><span>画面可选花字</span><button type="button" class="field-dice-btn" data-dice-post="overlayTitle" data-pool="overlayTitle" title="随机花字">🎲</button></label>
             <input type="text" class="ctrl-input" data-field="overlayTitle" value="${escapeHtml(post.overlayTitle || '')}" placeholder="留空更干净" />
           </div>
           <div class="field-group">
-            <label class="field-label">底栏状态标签</label>
+            <label class="field-label"><span>底栏状态标签</span><button type="button" class="field-dice-btn" data-dice-post="watchedTag" data-pool="watchedTag" title="随机状态">🎲</button></label>
             <input type="text" class="ctrl-input" data-field="watchedTag" value="${escapeHtml(post.watchedTag || '')}" placeholder="如：刚刚看过" />
           </div>
         </div>
 
         <div class="field-group">
-          <label class="field-label">卡片作者名（关闭「全部作品同步主页昵称」后独立生效）</label>
+          <label class="field-label"><span>卡片作者名（关闭同步后生效）</span><button type="button" class="field-dice-btn" data-dice-post="customAuthor" data-pool="nickname" title="随机作者名">🎲</button></label>
           <input type="text" class="ctrl-input" data-field="customAuthor" value="${escapeHtml(post.customAuthor || '')}" placeholder="留空或同步时跟随主页昵称" />
         </div>
 
@@ -2936,6 +4071,23 @@
         el.addEventListener(evt, () => {
           post[f] = el.value;
           persistState();
+        });
+      });
+
+      box.querySelectorAll('[data-dice-post]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const f = btn.getAttribute('data-dice-post');
+          const pool = btn.getAttribute('data-pool') || f;
+          if (!global.LayaDefaults || !global.LayaDefaults.rollRandomFieldValue) return;
+          let nv = global.LayaDefaults.rollRandomFieldValue(pool, post[f], state);
+          if (f === 'hotComment' && nv && !nv.startsWith('💬')) {
+            nv = `💬 热评：${nv}`;
+          }
+          post[f] = nv;
+          const inp = box.querySelector(`[data-field="${f}"]`);
+          if (inp) inp.value = nv;
+          persistState();
+          requestStageRender();
         });
       });
 
@@ -3070,6 +4222,7 @@
 
       const box = document.createElement('div');
       box.className = 'feed-card-editor';
+      box.setAttribute('data-cmt-id', cm.id);
       box.innerHTML = `
         <div class="feed-card-editor-head">
           <div style="display:flex;align-items:center;gap:8px;">
@@ -3083,24 +4236,24 @@
         </div>
         <div class="grid-3-col">
           <div class="field-group">
-            <label class="field-label">昵称</label>
+            <label class="field-label"><span>昵称</span><button type="button" class="field-dice-btn" data-dice-cmt="nickname" data-pool="nickname" title="随机昵称">🎲</button></label>
             <input type="text" class="ctrl-input" data-field="nickname" value="${escapeHtml(cm.nickname || '')}" />
           </div>
           <div class="field-group">
-            <label class="field-label">时间属地</label>
+            <label class="field-label"><span>时间属地</span><button type="button" class="field-dice-btn" data-dice-cmt="timeLoc" data-pool="commentMeta" title="随机时间属地">🎲</button></label>
             <input type="text" class="ctrl-input" data-field="timeLoc" value="${escapeHtml(cm.timeLoc || '')}" />
           </div>
           <div class="field-group">
-            <label class="field-label">赞数</label>
+            <label class="field-label"><span>赞数</span><button type="button" class="field-dice-btn" data-dice-cmt="likes" data-pool="likes" title="随机赞数">🎲</button></label>
             <input type="text" class="ctrl-input" data-field="likes" value="${escapeHtml(cm.likes || '')}" />
           </div>
         </div>
         <div class="field-group">
-          <label class="field-label">评论正文</label>
+          <label class="field-label"><span>评论正文</span><button type="button" class="field-dice-btn" data-dice-cmt="text" data-pool="commentText" title="随机评论">🎲</button></label>
           <textarea class="ctrl-textarea" rows="2" data-field="text">${escapeHtml(cm.text || '')}</textarea>
         </div>
         <div class="field-group">
-          <label class="field-label">作者回复（可选，留空不显示）</label>
+          <label class="field-label"><span>作者回复（留空不显示）</span><button type="button" class="field-dice-btn" data-dice-cmt="authorReply" data-pool="commentReply" title="随机回复">🎲</button></label>
           <input type="text" class="ctrl-input" data-field="authorReply" value="${escapeHtml(cm.authorReply || '')}" placeholder="输入作者回复..." />
         </div>
       `;
@@ -3110,6 +4263,20 @@
         el.addEventListener('input', () => {
           cm[f] = el.value;
           persistState();
+        });
+      });
+
+      box.querySelectorAll('[data-dice-cmt]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const f = btn.getAttribute('data-dice-cmt');
+          const pool = btn.getAttribute('data-pool') || f;
+          if (!global.LayaDefaults || !global.LayaDefaults.rollRandomFieldValue) return;
+          const nv = global.LayaDefaults.rollRandomFieldValue(pool, cm[f], state);
+          cm[f] = nv;
+          const inp = box.querySelector(`[data-field="${f}"]`);
+          if (inp) inp.value = nv;
+          persistState();
+          requestStageRender();
         });
       });
 
@@ -3156,12 +4323,14 @@
     const bNav = state.profileCenter.bottomNav || {};
     (bNav.tabs || []).forEach((tab, idx) => {
       const isAct = idx === Number(bNav.activeIndex);
+      const canDel = bNav.tabs.length > 1;
       const row = document.createElement('div');
       row.className = 'inline-item-row';
       row.innerHTML = `
         <button type="button" class="pill-radio ${isAct ? 'active' : ''}">${isAct ? '★ 高亮' : '设高亮'}</button>
         <input type="text" class="ctrl-input" data-role="label" value="${escapeHtml(tab.label || '')}" placeholder="标签名" />
         <input type="text" class="ctrl-input" data-role="badge" value="${escapeHtml(tab.badge || '')}" placeholder="角标(如99+)" style="width:76px;flex:0 0 76px;" />
+        ${canDel ? '<button type="button" class="btn-icon-danger" data-act="delBotTab">删</button>' : ''}
       `;
       row.querySelector('.pill-radio').addEventListener('click', () => {
         bNav.activeIndex = idx;
@@ -3176,6 +4345,18 @@
         tab.badge = e.target.value;
         persistState();
       });
+      const delBtn = row.querySelector('[data-act="delBotTab"]');
+      if (delBtn) {
+        delBtn.addEventListener('click', () => {
+          bNav.tabs.splice(idx, 1);
+          if (bNav.activeIndex >= bNav.tabs.length) {
+            bNav.activeIndex = Math.max(0, bNav.tabs.length - 1);
+          }
+          renderProfileBottomNavEditor();
+          renderPerTextFontList();
+          persistState();
+        });
+      }
       container.appendChild(row);
     });
   }
@@ -3201,12 +4382,19 @@
           });
           renderProfilePostsEditor();
           updateExportModeHint();
+          requestStageRender();
           resolve(post.id);
         };
         video.addEventListener('loadeddata', onReady, { once: true });
         video.addEventListener('error', () => resolve(post.id), { once: true });
-        video.addEventListener('play', () => renderProfilePostsEditor());
-        video.addEventListener('pause', () => renderProfilePostsEditor());
+        video.addEventListener('play', () => {
+          renderProfilePostsEditor();
+          requestStageRender();
+        });
+        video.addEventListener('pause', () => {
+          renderProfilePostsEditor();
+          requestStageRender();
+        });
 
         mediaRegistry.profCardMedia[post.id] = { type: 'video', el: video, url };
         post.mediaType = 'video';
@@ -3228,6 +4416,7 @@
           post.aspectRatio = 'auto';
           renderProfilePostsEditor();
           updateExportModeHint();
+          requestStageRender();
           if (shouldSaveToDB) {
             persistMedia(`profCardMedia:${post.id}`, blobOrFile, { fileName: displayName });
             persistState();
@@ -3555,10 +4744,10 @@
     }
 
     if (key === 'prof_id_row') {
-      const curPref = pc.user.idPrefix !== undefined ? pc.user.idPrefix : 'Laya号：';
+      const curPref = pc.user.idPrefix !== undefined ? pc.user.idPrefix : '账号 ID：';
       const curId = pc.user.userId !== undefined ? pc.user.userId : '';
       openInlineEditorPopover({
-        title: 'Laya 号整行文案（可改前缀或纯 ID）',
+        title: '账号 ID 整行文案（可改前缀或纯 ID）',
         initialValue: `${curPref}${curId}`,
         clientX,
         clientY,
@@ -3786,6 +4975,36 @@
       return true;
     }
 
+    if (key.startsWith('prof_extra_badge_')) {
+      const bId = key.slice('prof_extra_badge_'.length);
+      const list = (pc.user && pc.user.extraBadges) || [];
+      const bItem = list.find((b) => b && b.id === bId);
+      if (!bItem) return true;
+      openInlineEditorPopover({
+        title: '自定义身份徽章文字',
+        initialValue: bItem.text || '',
+        clientX,
+        clientY,
+        onInput: (val) => {
+          bItem.text = val;
+          renderProfileExtraBadgesEditor();
+        },
+        extraButtons: [
+          {
+            text: '🎨 切换配色',
+            primary: true,
+            onClick: () => {
+              const styles = ['purple', 'pink', 'blue', 'glass'];
+              bItem.style = styles[(styles.indexOf(bItem.style || 'purple') + 1) % styles.length];
+              renderProfileExtraBadgesEditor();
+              persistState();
+            }
+          }
+        ]
+      });
+      return true;
+    }
+
     if (key.startsWith('prof_post_')) {
       const postId = key.replace('prof_post_', '');
       const post = pc.posts.find((p) => p.id === postId);
@@ -3856,6 +5075,7 @@
     const img = new Image();
     img.onload = () => {
       callback(img);
+      requestStageRender();
     };
     img.src = url;
   }

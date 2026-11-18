@@ -147,6 +147,10 @@
       merged.offsets = (parsed && parsed.offsets) || {};
       merged.hiddenElements = (parsed && parsed.hiddenElements) || {};
       merged.fontSizes = (parsed && parsed.fontSizes) || {};
+      merged.customElements = Array.isArray(parsed && parsed.customElements) ? parsed.customElements : [];
+      if (merged.profileCenter && merged.profileCenter.user && !Array.isArray(merged.profileCenter.user.extraBadges)) {
+        merged.profileCenter.user.extraBadges = [];
+      }
       return merged;
     } catch (_) {
       return defaultState;
@@ -218,7 +222,25 @@
     ['在线', '在線'],
     ['连麦', '連麥'],
     ['热评', '熱評'],
-    ['江苏', '江蘇']
+    ['江苏', '江蘇'],
+    ['链接', '連結'],
+    ['桃园', '桃園'],
+    ['束缚', '束縛'],
+    ['猪肝', '豬肝'],
+    ['台湾', '台灣'],
+    ['澳门', '澳門'],
+    ['马来西亚', '馬來西亞'],
+    ['信义', '信義'],
+    ['铜锣湾', '銅鑼灣'],
+    ['滨海湾', '濱海灣'],
+    ['乌节', '烏節'],
+    ['槟城', '檳城'],
+    ['马六甲', '馬六甲'],
+    ['九龙', '九龍'],
+    ['中环', '中環'],
+    ['板桥', '板橋'],
+    ['左营', '左營'],
+    ['路环', '路環']
   ];
 
   const T2S_PHRASES = [
@@ -251,7 +273,25 @@
     ['在線', '在线'],
     ['連麥', '连麦'],
     ['熱評', '热评'],
-    ['江蘇', '江苏']
+    ['江蘇', '江苏'],
+    ['連結', '链接'],
+    ['桃園', '桃园'],
+    ['束縛', '束缚'],
+    ['豬肝', '猪肝'],
+    ['台灣', '台湾'],
+    ['澳門', '澳门'],
+    ['馬來西亞', '马来西亚'],
+    ['信義', '信义'],
+    ['銅鑼灣', '铜锣湾'],
+    ['濱海灣', '滨海湾'],
+    ['烏節', '乌节'],
+    ['檳城', '槟城'],
+    ['馬六甲', '马六甲'],
+    ['九龍', '九龙'],
+    ['中環', '中环'],
+    ['板橋', '板桥'],
+    ['左營', '左营'],
+    ['路環', '路环']
   ];
 
   function convertString(str, toTraditional) {
@@ -360,6 +400,11 @@
         pc.user.ipText = conv(pc.user.ipText);
         pc.user.age = conv(pc.user.age);
         pc.user.voiceTag = conv(pc.user.voiceTag);
+        if (Array.isArray(pc.user.extraBadges)) {
+          pc.user.extraBadges.forEach((b) => {
+            if (b && b.text) b.text = conv(b.text);
+          });
+        }
       }
       if (pc.stats && Array.isArray(pc.stats.items)) {
         pc.stats.items.forEach((st) => {
@@ -412,6 +457,12 @@
           t.label = conv(t.label);
         });
       }
+    }
+
+    if (Array.isArray(state.customElements)) {
+      state.customElements.forEach((el) => {
+        if (el && el.text) el.text = conv(el.text);
+      });
     }
 
     state.posterLang = toTraditional ? 'zh-TW' : 'zh-CN';

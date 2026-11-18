@@ -13,6 +13,13 @@
   let _measureCanvas = null;
   let _measureCtx = null;
 
+  // 复用的模糊头像背景离屏缓存，避免每帧重复执行 CPU blur(6px) 导致卡顿
+  let _blurBgCacheCanvas = null;
+  let _blurBgCacheImg = null;
+  let _blurBgCacheSrc = '';
+  let _blurBgCacheW = 0;
+  let _blurBgCacheH = 0;
+
   function getMeasureCtx() {
     if (!_measureCtx) {
       _measureCanvas = document.createElement('canvas');
@@ -128,8 +135,10 @@
     const avatarY = topBarY + 66;
     const avatarSize = 154;
 
-    // 徽章行之后，留足空间放三列统计数据
-    const statsY = avatarY + avatarSize + 36;
+    // 徽章行之后，留足空间放三列统计数据（如有自定义扩展徽章动态顺延）
+    const extraBadgesList = (pc.user && Array.isArray(pc.user.extraBadges)) ? pc.user.extraBadges : [];
+    const extraBadgeRowPadding = extraBadgesList.length > 0 ? Math.ceil((extraBadgesList.length + 1) / 3) * 34 : 0;
+    const statsY = avatarY + avatarSize + 36 + extraBadgeRowPadding;
     const statsH = 74;
 
     // 测算多行 Bio 文本高度
@@ -406,11 +415,34 @@
         renderer.drawCoverImage(ctx, vibeImg, bgOff.x, bgOff.y, W, heroDrawH);
         drewImg = true;
       } else if (hdr.bgStyle === 'portrait-glow' && avatarImgForPortrait && avatarImgForPortrait.complete && avatarImgForPortrait.naturalWidth) {
-        // 复刻图2“背景人物虚化融合”效果 + Laya 暗紫渐变叠层
-        ctx.save();
-        ctx.filter = 'blur(6px) saturate(1.18)';
-        renderer.drawCoverImage(ctx, avatarImgForPortrait, bgOff.x + 120, bgOff.y - 40, W, heroDrawH + 80);
-        ctx.restore();
+        // 复刻图2“背景人物虚化融合”效果 + 暗紫渐变叠层（离屏缓存，避免每帧 blur 卡顿）
+        const drawH = heroDrawH + 80;
+        const imgSrc = avatarImgForPortrait.currentSrc || avatarImgForPortrait.src || '';
+        if (!_blurBgCacheCanvas) {
+          _blurBgCacheCanvas = document.createElement('canvas');
+        }
+        if (
+          _blurBgCacheImg !== avatarImgForPortrait ||
+          _blurBgCacheSrc !== imgSrc ||
+          _blurBgCacheW !== W ||
+          _blurBgCacheH !== drawH
+        ) {
+          _blurBgCacheCanvas.width = W;
+          _blurBgCacheCanvas.height = drawH;
+          const bCtx = _blurBgCacheCanvas.getContext('2d');
+          if (bCtx) {
+            bCtx.clearRect(0, 0, W, drawH);
+            bCtx.save();
+            bCtx.filter = 'blur(6px) saturate(1.18)';
+            renderer.drawCoverImage(bCtx, avatarImgForPortrait, 0, 0, W, drawH);
+            bCtx.restore();
+          }
+          _blurBgCacheImg = avatarImgForPortrait;
+          _blurBgCacheSrc = imgSrc;
+          _blurBgCacheW = W;
+          _blurBgCacheH = drawH;
+        }
+        ctx.drawImage(_blurBgCacheCanvas, bgOff.x + 120, bgOff.y - 40);
         drewImg = true;
       }
 
@@ -452,6 +484,7 @@
     }
 
     // 3) 顶部导航交互按钮（左返回 < + 语音在线胶囊 + 右更多 ···）
+    renderer.withModuleTransform(ctx, state, 'prof_mod_header', '区块：顶部导航按钮栏', layout.padX, layout.topBarY, layout.contentW, 56, () => {
     const navRowCY = layout.topBarY + 26;
     if (hdr.showBackBtn !== false && renderer.isVisible(state, 'prof_back_btn')) {
       const bOff = renderer.getOffset(state, 'prof_back_btn');
@@ -518,9 +551,12 @@
       ctx.restore();
       renderer.registerHit('prof_more_btn', '右上更多图标', 'element', mx - 26, my - 26, 52, 52, 'prof_header');
     }
+    });
 
-    // 4) 核心身份区：大圆形头像 + 昵称 + Laya号 + IP属地 + Laya 性别/等级/声音徽章
+    // 4) 核心身份区：大圆形头像 + 昵称 + Laya号 + IP属地 + Laya 性别/等级/声音徽章 + 自定义徽章
     const u = pc.user || {};
+    const identityModH = Math.max(layout.avatarSize + 18, layout.statsY - layout.avatarY - 10);
+    renderer.withModuleTransform(ctx, state, 'prof_mod_identity', '区块：头像与个人身份区', layout.padX, layout.avatarY - 6, layout.contentW, identityModH, () => {
     const avSize = layout.avatarSize;
     const avX = layout.padX;
     const avY = layout.avatarY;
@@ -681,9 +717,46 @@
       const ph = Math.max(26, Math.round(vFs * 1.54));
       const pw = renderer.drawSubtleGlassPill(ctx, u.voiceTag, badgeCurX + vOff.x, curInfoY + vOff.y, 'rgba(192, 132, 252, 0.16)', '#f3e8ff', vFs);
       renderer.registerHit('prof_voice_tag', '声音个性标签', 'element', badgeCurX + vOff.x, curInfoY - ph / 2 + vOff.y, pw, ph + 2, 'prof_identity');
+      badgeCurX += pw + 10;
     }
 
+    // 自定义新增个性徽章列表
+    if (Array.isArray(u.extraBadges) && u.extraBadges.length > 0) {
+      u.extraBadges.forEach((b) => {
+        if (!b || !b.id) return;
+        const bKey = `prof_extra_badge_${b.id}`;
+        if (!renderer.isVisible(state, bKey)) return;
+        const bOff = renderer.getOffset(state, bKey);
+        const bFs = renderer.getFontPx(state, bKey, 18);
+        const txt = String(b.text || '✨ 自定义徽章');
+        ctx.save();
+        ctx.font = `600 ${bFs}px ${FONT_SANS}`;
+        const estW = ctx.measureText(txt).width + 26;
+        ctx.restore();
+        if (badgeCurX + estW > W - layout.padX) {
+          curInfoY += 36;
+          badgeCurX = infoX;
+        }
+        const ph = Math.max(26, Math.round(bFs * 1.54));
+        const sty = b.style || 'purple';
+        let pw;
+        if (sty === 'pink') {
+          pw = renderer.drawTagPill(ctx, txt, badgeCurX + bOff.x, curInfoY + bOff.y, '#db2777', '#ec4899', '#ffffff', bFs);
+        } else if (sty === 'blue') {
+          pw = renderer.drawTagPill(ctx, txt, badgeCurX + bOff.x, curInfoY + bOff.y, '#2563eb', '#0ea5e9', '#ffffff', bFs);
+        } else if (sty === 'glass') {
+          pw = renderer.drawSubtleGlassPill(ctx, txt, badgeCurX + bOff.x, curInfoY + bOff.y, 'rgba(192, 132, 252, 0.16)', '#f3e8ff', bFs);
+        } else {
+          pw = renderer.drawTagPill(ctx, txt, badgeCurX + bOff.x, curInfoY + bOff.y, '#7e22ce', '#a855f7', '#fae8ff', bFs);
+        }
+        renderer.registerHit(bKey, `个性徽章：${txt}`, 'element', badgeCurX + bOff.x, curInfoY - ph / 2 + bOff.y, pw, ph + 2, 'prof_identity');
+        badgeCurX += pw + 10;
+      });
+    }
+    });
+
     // 5) 三组统计数字行（关注 / 粉丝 / 获赞与收藏）
+    renderer.withModuleTransform(ctx, state, 'prof_mod_stats', '区块：关注与粉丝统计区', layout.padX, layout.statsY, layout.contentW, layout.statsH, () => {
     const statItems = (pc.stats && pc.stats.items) || [];
     let statX = layout.padX + 4;
     statItems.forEach((st, idx) => {
@@ -728,9 +801,11 @@
 
       statX += colSpan + 36;
     });
+    });
 
     // 6) 多行个性签名简介
     if (pc.bio && pc.bio.text && renderer.isVisible(state, 'prof_bio_text')) {
+      renderer.withModuleTransform(ctx, state, 'prof_mod_bio', '区块：个性简介区', layout.padX, layout.bioY - 4, layout.contentW, Math.max(40, layout.bioH + 8), () => {
       const bOff = renderer.getOffset(state, 'prof_bio_text');
       const bioFs = renderer.getFontPx(state, 'prof_bio_text', 25);
       const bx = layout.padX + 4 + bOff.x;
@@ -760,10 +835,12 @@
         Math.max(36, layout.bioLines.length * layout.bioLineH + 6),
         'prof_bio'
       );
+      });
     }
 
     // 7) 瞬间 / 语音胶囊条（对标图2全宽半透明胶囊条，融入 Laya 紫粉玻璃质感）
     if (pc.momentBar && pc.momentBar.enabled !== false && renderer.isVisible(state, 'prof_moment_bar')) {
+      renderer.withModuleTransform(ctx, state, 'prof_mod_moment', '区块：瞬间语音栏', layout.padX, layout.momentY, layout.contentW, layout.momentH, () => {
       const mbOff = renderer.getOffset(state, 'prof_moment_bar');
       const mx = layout.padX + mbOff.x;
       const my = layout.momentY + mbOff.y;
@@ -815,10 +892,12 @@
       }
       ctx.restore();
       renderer.registerHit('prof_moment_bar', '瞬间语音横条', 'element', mx, my, mw, mh, 'prof_moment_bar');
+      });
     }
 
     // 8) 互动操作行：Laya 紫粉渐变主按钮（关注） + 暗紫毛玻璃（发私信） + 扩列好友小钮
     if (renderer.isVisible(state, 'prof_actions_row')) {
+      renderer.withModuleTransform(ctx, state, 'prof_mod_actions', '区块：关注与私信按钮区', layout.padX, layout.actionsY, layout.contentW, layout.actionsH, () => {
       const act = pc.actions || {};
       const showFriend = act.showFriendBtn !== false && renderer.isVisible(state, 'prof_btn_friend');
       const friendW = showFriend ? 80 : 0;
@@ -914,9 +993,11 @@
         ctx.restore();
         renderer.registerHit('prof_btn_friend', '扩列好友图标按钮', 'element', frx, fry, friendW, btnH, 'prof_actions');
       }
+      });
     }
 
     // 9) 内容分区 Tabs 栏（动态 / 视频 / 瞬间 / 收藏 + 右侧搜索图标）
+    renderer.withModuleTransform(ctx, state, 'prof_mod_tabs', '区块：内容分区标签栏', 0, layout.tabsY, W, layout.tabsH, () => {
     const ct = pc.contentTabs || {};
     const tabList = Array.isArray(ct.tabs) ? ct.tabs : ['动态'];
     const tabsY = layout.tabsY;
@@ -972,8 +1053,12 @@
       renderer.drawMagnifier(ctx, sx, sy, 12, 'rgba(216, 206, 240, 0.78)', 2.8);
       renderer.registerHit('prof_content_search', '作品栏搜索图标', 'element', sx - 24, sy - 24, 48, 48, 'prof_tabs');
     }
+    });
 
     // 10) 双列错落瀑布流视频/图片卡片
+    const feedTopY = layout.tabsY + layout.tabsH + 10;
+    const feedModH = Math.max(120, layout.feedBottomY - feedTopY + 12);
+    renderer.withModuleTransform(ctx, state, 'prof_mod_feed', '区块：双列作品瀑布流', layout.padX, feedTopY, layout.contentW, feedModH, () => {
     const feedCfg = pc.feedSettings || {};
     const cardRadius = Number(feedCfg.cardRadius) || 18;
     const syncedAvatar = resolveAvatarImage(
@@ -1311,10 +1396,12 @@
       }
       renderer.registerHit(pKey, `作品卡片 ${idx + 1}（点击上传/拖动）`, 'element', cx, cy, cw, ch, 'prof_feed');
     });
+    });
 
     // 11) 底部 Laya 互动评论区抽屉板块
     const cmtSec = pc.commentSection || {};
     if (cmtSec.enabled !== false && layout.commentsH > 0 && renderer.isVisible(state, 'prof_comment_section')) {
+      renderer.withModuleTransform(ctx, state, 'prof_mod_comments', '区块：底部互动评论区', layout.padX, layout.commentsY, layout.contentW, layout.commentsH, () => {
       const csX = layout.padX;
       const csY = layout.commentsY;
       const csW = layout.contentW;
@@ -1382,10 +1469,11 @@
         const rowY = cl.y + cOff.y;
         const rowW = csW - 48;
 
-        // 评论者头像（支持点击从头像库选）
+        // 评论者头像（支持点击从头像库选 + 独立拖动偏移）
         const avKey = `prof_cmt_avatar_${cm.id}`;
-        const avX = rowX;
-        const avY = rowY + 6;
+        const avOff = renderer.getOffset(state, avKey);
+        const avX = rowX + avOff.x;
+        const avY = rowY + 6 + avOff.y;
         const avSz = 56;
         if (renderer.isVisible(state, avKey)) {
           const customCmtAv = renderer.media && renderer.media.profCommentAvatars && renderer.media.profCommentAvatars[cm.id];
@@ -1506,19 +1594,27 @@
           ctx.restore();
         }
       });
+      });
     }
+
+    // 自由添加的自定义画布元素（个人中心图层，随长图与竖屏滚动同步）
+    renderer.renderCustomElements(ctx, state, 'profile', isFullTrans, isLight);
 
     ctx.restore(); // 结束可滚动内容
     renderer._hitScrollOffsetY = 0;
 
     // 12) 固定在顶部的手机系统状态栏（参考图2顶部 01:05 + 图标 + 电量，融合 Laya 状态图标）
     if (hdr.showStatusBar && renderer.isVisible(state, 'prof_status_bar')) {
-      renderProfileStatusBar(renderer, ctx, state, hdr, W, layout.statusH, isFullTrans, isLight);
+      renderer.withModuleTransform(ctx, state, 'prof_mod_status', '区块：顶部系统状态栏', 0, 0, W, layout.statusH, () => {
+        renderProfileStatusBar(renderer, ctx, state, hdr, W, layout.statusH, isFullTrans, isLight);
+      });
     }
 
     // 13) 可选固定在底部的 Laya 软件原生五宫格导航栏
     if (pc.bottomNav && pc.bottomNav.enabled && renderer.isVisible(state, 'prof_bottom_nav')) {
-      renderProfileBottomNav(renderer, ctx, state, pc.bottomNav, W, H, layout.botNavH, isFullTrans, isLight);
+      renderer.withModuleTransform(ctx, state, 'prof_mod_bottom_nav', '区块：底部五宫格导航栏', 0, H - layout.botNavH, W, layout.botNavH, () => {
+        renderProfileBottomNav(renderer, ctx, state, pc.bottomNav, W, H, layout.botNavH, isFullTrans, isLight);
+      });
     }
   }
 
@@ -1533,6 +1629,8 @@
       ctx.fillRect(0, 0, W, sbH);
     }
 
+    let tw = 0;
+    let timeLeftX = padX;
     if (renderer.isVisible(state, 'prof_sb_time')) {
       const tOff = renderer.getOffset(state, 'prof_sb_time');
       const tFs = renderer.getFontPx(state, 'prof_sb_time', 24);
@@ -1543,44 +1641,60 @@
       ctx.textBaseline = 'middle';
       const timeStr = strVal(hdr.time, '01:05');
       renderer.fillReadableText(ctx, timeStr, tx, ty, isLight ? '#181029' : '#ffffff', isFullTrans);
-      const tw = Math.max(40, ctx.measureText(timeStr).width);
+      tw = Math.max(40, ctx.measureText(timeStr).width);
+      timeLeftX = tx;
       renderer.registerHit('prof_sb_time', '状态栏时间', 'element', tx - 4, ty - 16, tw + 10, 32, 'prof_status_bar');
+    }
 
-      // 紧随时间后的 Laya 小图标 + 社交通知小点
-      let nx = tx + tw + 14;
+    // 紧随时间后的 Laya 小图标 + 社交通知小点（支持独立拖动与隐藏恢复）
+    if (renderer.isVisible(state, 'prof_sb_notifs')) {
+      const nOff = renderer.getOffset(state, 'prof_sb_notifs');
+      let nx = timeLeftX + (tw ? tw + 14 : 0) + nOff.x;
+      const nStartX = nx;
+      const nCy = cy + nOff.y;
       if (hdr.showLayaNotif !== false && raw.brand_laya && raw.brand_laya.complete) {
         ctx.save();
-        renderer.roundRect(ctx, nx, cy - 13, 26, 26, 6);
+        renderer.roundRect(ctx, nx, nCy - 13, 26, 26, 6);
         ctx.clip();
-        renderer.drawCoverImage(ctx, raw.brand_laya, nx, cy - 13, 26, 26);
+        renderer.drawCoverImage(ctx, raw.brand_laya, nx, nCy - 13, 26, 26);
         ctx.restore();
         nx += 34;
       }
       if (raw.sb_notifs && raw.sb_notifs.complete && raw.sb_notifs.naturalWidth) {
-        ctx.drawImage(raw.sb_notifs, 0, 0, 16, 20, nx, cy - 12, 20, 24);
+        ctx.drawImage(raw.sb_notifs, 0, 0, 16, 20, nx, nCy - 12, 20, 24);
         nx += 26;
-        ctx.drawImage(raw.sb_notifs, 17, 0, 17, 20, nx, cy - 12, 21, 24);
+        ctx.drawImage(raw.sb_notifs, 17, 0, 17, 20, nx, nCy - 12, 21, 24);
+        nx += 24;
+      }
+      if (nx > nStartX) {
+        renderer.registerHit('prof_sb_notifs', '状态栏通知图标', 'element', nStartX - 4, nCy - 15, nx - nStartX + 4, 30, 'prof_status_bar');
       }
     }
 
-    // 右侧 5G / Wi-Fi / 电量胶囊（同图2风格）
-    const netLabel = strVal(hdr.networkType, '5G') || '5G';
-    let rx = W - padX;
-    rx -= 52;
-    renderer.drawBatteryIcon(ctx, rx, cy - 12, 48, 24, hdr.battery || 20, hdr.charging);
-    rx -= 14;
-    if (hdr.wifi !== false) {
-      rx -= 26;
-      renderer.drawWifiIcon(ctx, rx + 13, cy + 8);
-      rx -= 12;
-    }
-    if (hdr.dualSim !== false) {
+    // 右侧 5G / Wi-Fi / 电量胶囊（支持独立拖动与隐藏恢复）
+    if (renderer.isVisible(state, 'prof_sb_system')) {
+      const sysOff = renderer.getOffset(state, 'prof_sb_system');
+      const netLabel = strVal(hdr.networkType, '5G') || '5G';
+      let rx = W - padX + sysOff.x;
+      const rightEdge = rx;
+      const rCy = cy + sysOff.y;
+      rx -= 52;
+      renderer.drawBatteryIcon(ctx, rx, rCy - 12, 48, 24, hdr.battery || 20, hdr.charging);
+      rx -= 14;
+      if (hdr.wifi !== false) {
+        rx -= 26;
+        renderer.drawWifiIcon(ctx, rx + 13, rCy + 8);
+        rx -= 12;
+      }
+      if (hdr.dualSim !== false) {
+        rx -= 44;
+        renderer.drawSignalIcon(ctx, rx, rCy - 13, hdr.signal2 || 3, netLabel, 0.88);
+        rx -= 8;
+      }
       rx -= 44;
-      renderer.drawSignalIcon(ctx, rx, cy - 13, hdr.signal2 || 3, netLabel, 0.88);
-      rx -= 8;
+      renderer.drawSignalIcon(ctx, rx, rCy - 13, hdr.signal1 || 4, netLabel, 0.88);
+      renderer.registerHit('prof_sb_system', '状态栏信号与电量', 'element', rx - 4, rCy - 16, rightEdge - rx + 8, 32, 'prof_status_bar');
     }
-    rx -= 44;
-    renderer.drawSignalIcon(ctx, rx, cy - 13, hdr.signal1 || 4, netLabel, 0.88);
 
     ctx.restore();
   }
@@ -1625,12 +1739,14 @@
       }
 
       if (tab.badge && renderer.isVisible(state, `prof_bot_badge_${idx}`)) {
-        const badgeFs = renderer.getFontPx(state, `prof_bot_badge_${idx}`, 12);
+        const badgeKey = `prof_bot_badge_${idx}`;
+        const bdOff = renderer.getOffset(state, badgeKey);
+        const badgeFs = renderer.getFontPx(state, badgeKey, 12);
         ctx.font = `800 ${badgeFs}px ${FONT_SANS}`;
         const bw = Math.max(30, ctx.measureText(tab.badge).width + 14);
         const bh = Math.max(18, Math.round(badgeFs * 1.6));
-        const bx = cx + 12;
-        const by = iconCY - 22;
+        const bx = cx + 12 + bdOff.x;
+        const by = iconCY - 22 + bdOff.y;
         ctx.fillStyle = '#fe2c55';
         renderer.roundRect(ctx, bx, by, bw, bh, bh / 2);
         ctx.fill();
@@ -1638,7 +1754,7 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(tab.badge, bx + bw / 2, by + bh / 2 + 0.5);
-        renderer.registerHit(`prof_bot_badge_${idx}`, `导航角标：${tab.label}`, 'element', bx - 2, by - 2, bw + 4, bh + 4, 'prof_bottom_nav');
+        renderer.registerHit(badgeKey, `导航角标：${tab.label}`, 'element', bx - 2, by - 2, bw + 4, bh + 4, 'prof_bottom_nav');
       }
 
       const fs = renderer.getFontPx(state, key, 19);
@@ -1949,7 +2065,7 @@
           '你是 Laya 语音社交 App 的个人主页人设生成器。',
           `请根据用户期望风格「${pc.aiPersonaPrompt || '魅力声控交友达人'}」及性别倾向「${genderHint}」，生成一套真实自然的${langName}个人中心资料。`,
           '要求只返回严格 JSON：',
-          '{"nickname":"带反差感的昵称","userId":"8位左右字母数字ID","ipText":"IP：城市或省份","gender":"female或male","age":"例如22岁","level":"例如Lv.28","voiceTag":"带emoji的声音标签","onlineBadgeText":"例如🟢 语音房连麦中","following":"例如824","fans":"例如1.2万","likes":"例如6.8万","bioText":"3-4行个性简介，含emoji换行\\n","momentDesc":"例如 2 条瞬间 · 🎙️ 语音签名 15\\""}'
+          '{"nickname":"带反差感的昵称","userId":"8位左右字母数字ID","ipText":"IP：仅限台湾、新加坡、香港、澳门、马来西亚的城市（如 IP：台湾 · 台北 / IP：新加坡 / IP：香港 / IP：澳门 / IP：马来西亚 · 吉隆坡）","gender":"female或male","age":"例如22岁","level":"例如Lv.28","voiceTag":"带emoji的声音标签","onlineBadgeText":"例如🟢 语音房连麦中","following":"例如824","fans":"例如1.2万","likes":"例如6.8万","bioText":"3-4行个性简介，含emoji换行\\n","momentDesc":"例如 2 条瞬间 · 🎙️ 语音签名 15\\""}'
         ].join('\n');
 
         const resp = await callGeminiRequest(state.aiConfig, [{ text: prompt }], {
@@ -1962,7 +2078,7 @@
           vibeIndex,
           nickname: obj.nickname || '汐颜（回关）',
           userId: obj.userId || 'LY6182189',
-          ipText: obj.ipText || 'IP：上海',
+          ipText: obj.ipText || 'IP：台湾 · 台北',
           gender: obj.gender === 'male' ? 'male' : 'female',
           age: obj.age || '22岁',
           level: obj.level || 'Lv.28',
@@ -1983,7 +2099,7 @@
       {
         nickname: '林初夏（互关）',
         userId: 'LY8829104',
-        ipText: 'IP：浙江 · 杭州',
+        ipText: 'IP：澳门 · 氹仔',
         gender: 'female',
         age: '21岁',
         level: 'Lv.29',
@@ -1992,13 +2108,13 @@
         following: '642',
         fans: '8920',
         likes: '6.2万',
-        bioText: '🌙 晚睡星人专属树洞\n🎤 吉他弹唱 / 深夜读诗 / 语音连麦\n🏃‍♀️ 西湖夜跑打卡第 128 天\n💌 私信秒回，扩列滴～',
+        bioText: '🌙 晚睡星人专属树洞\n🎤 吉他弹唱 / 深夜读诗 / 语音连麦\n🏃‍♀️ 海滨夜跑打卡第 128 天\n💌 私信秒回，扩列滴～',
         momentDesc: '3 条瞬间 · 🎙️ 语音签名 15"'
       },
       {
         nickname: 'Selina · 晚风',
         userId: 'XU38686149',
-        ipText: 'IP：江苏 · 苏州',
+        ipText: 'IP：马来西亚 · 槟城',
         gender: 'female',
         age: '23岁',
         level: 'Lv.32',
@@ -2181,7 +2297,7 @@
           '1. 每个作品的 title（10~22字，自然口语+适当emoji，像真人发的朋友圈/动态/短视频标题）；',
           '2. 每个作品的 hotComment（以 "💬 " 开头的短热评，12~24字，紧扣视频或图片里的细节调侃/夸赞）；',
           '3. 每个作品的 likes（真实点赞数如 "269"、"1048"）；',
-          '4. comments 数组（固定 3 条，根据刚才上传的画面内容来夸赞/提问/互动，包含海外华人/年轻用户昵称 nickname、评论正文 text、时间地点 timeLoc 如"刚刚 · 台北"、点赞数 likes、可选博主回复 authorReply）。',
+          '4. comments 数组（固定 3 条，根据刚才上传的画面内容来夸赞/提问/互动，包含海外华人/年轻用户昵称 nickname、评论正文 text、时间地点 timeLoc 仅限台湾/新加坡/香港/澳门/马来西亚城市如"刚刚 · 台北"或"10分钟前 · 澳门"、点赞数 likes、可选博主回复 authorReply）。',
           `严格只返回 JSON：{"posts":[{"title":"...","hotComment":"...","likes":"..."}],"comments":[{"nickname":"...","text":"...","timeLoc":"...","likes":"...","authorReply":"..."}]}，其中 posts 长度必须为 ${targets.length}。`
         ];
 
@@ -2280,7 +2396,8 @@
       };
     });
 
-    const nickPool = ['Jason_温哥华', '阿泽在台北', 'Kevin_墨尔本', '林屿森Sean', 'Ethan_吉隆坡', '小鹿同学'];
+    const nickPool = ['Jason_新加坡', '阿泽在台北', 'Kevin_澳门', '林屿森Sean', 'Ethan_吉隆坡', '小鹿同学'];
+    const locPool = ['刚刚 · 台北', '8分钟前 · 新加坡', '16分钟前 · 香港', '25分钟前 · 澳门', '38分钟前 · 吉隆坡'];
     const cmtPool = [
       '刚看完你新发的这几个动态，画面跟声音反差感也太戳人了吧！',
       '每一张质感都像电影截图一样，已点赞关注，晚上语音房蹲一波～',
@@ -2294,7 +2411,7 @@
         avatarCategory: av.category,
         avatarIndex: av.index,
         text: conv(txt),
-        timeLoc: conv(idx === 0 ? '刚刚 · 台北' : idx === 1 ? '12分钟前 · 新加坡' : '38分钟前 · 吉隆坡'),
+        timeLoc: conv(locPool[(idx + Math.floor(Math.random() * 2)) % locPool.length]),
         likes: String(Math.floor(Math.random() * 90 + 25)),
         authorReply: idx === 0 ? conv('谢谢支持呀！今晚十点语音房不见不散💜') : ''
       };

@@ -16,8 +16,14 @@
       this.media = mediaRegistry;
       this.hitBoxes = [];
       this.playButtons = [];
-      this.deleteActionBox = null;
       this._hitScrollOffsetY = 0;
+      this._hitGroupOffsetX = 0;
+      this._hitGroupOffsetY = 0;
+      this.deleteActionBox = null;
+      this.resizeActionBox = null;
+      this._hitScrollOffsetY = 0;
+      this._hitGroupOffsetX = 0;
+      this._hitGroupOffsetY = 0;
       this._tintCanvas = document.createElement('canvas');
     }
 
@@ -46,21 +52,50 @@
     }
 
     registerHit(key, label, kind, x, y, w, h, parentModule) {
-      const oy = y - (this._hitScrollOffsetY || 0);
+      const ox = x + (this._hitGroupOffsetX || 0);
+      const oy = y + (this._hitGroupOffsetY || 0) - (this._hitScrollOffsetY || 0);
       this.hitBoxes.push({
         key,
         label,
         kind,
         parentModule: parentModule || key,
-        x,
+        x: ox,
         y: oy,
         w,
         h,
-        cx: x + w / 2,
+        cx: ox + w / 2,
         cy: oy + h / 2,
-        right: x + w,
+        right: ox + w,
         bottom: oy + h
       });
+    }
+
+    withModuleTransform(ctx, state, modKey, modLabel, bx, by, bw, bh, drawFn) {
+      if (!this.isVisible(state, modKey)) return;
+      const mOff = this.getOffset(state, modKey);
+      const prevGx = this._hitGroupOffsetX || 0;
+      const prevGy = this._hitGroupOffsetY || 0;
+      const pbStart = this.playButtons.length;
+      ctx.save();
+      if (mOff.x || mOff.y) {
+        ctx.translate(mOff.x, mOff.y);
+      }
+      this._hitGroupOffsetX = prevGx + mOff.x;
+      this._hitGroupOffsetY = prevGy + mOff.y;
+      try {
+        drawFn();
+      } finally {
+        this._hitGroupOffsetX = prevGx;
+        this._hitGroupOffsetY = prevGy;
+        ctx.restore();
+      }
+      for (let i = pbStart; i < this.playButtons.length; i++) {
+        this.playButtons[i].x += mOff.x;
+        this.playButtons[i].y += mOff.y;
+        this.playButtons[i].cardX += mOff.x;
+        this.playButtons[i].cardY += mOff.y;
+      }
+      this.registerHit(modKey, modLabel, 'module', bx + mOff.x, by + mOff.y, bw, bh, modKey);
     }
 
     ensureCanvasDimensions(state) {
@@ -86,6 +121,9 @@
       const H = this.H;
       this.hitBoxes = [];
       this.playButtons = [];
+      this._hitScrollOffsetY = 0;
+      this._hitGroupOffsetX = 0;
+      this._hitGroupOffsetY = 0;
 
       const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
       this.animTime =
@@ -252,6 +290,9 @@
         ctx.restore();
         this.registerHit('floating_brand_logo', '独立浮动 Logo', 'element', flX, flY, flW, flH, 'floating_brand_logo');
       }
+
+      // ==================== 自由添加的自定义画布元素（全可移动、缩放、改字、删/加回） ====================
+      this.renderCustomElements(ctx, state, 'store', isFullTrans, isLight);
     }
 
     drawStageBackdrop(ctx, W, H, isLight, customDarkBg, t) {
@@ -830,22 +871,25 @@
         this.registerHit('sb_time', '状态栏时间', 'element', tx - 4, ty - timeFs * 0.65, tw + 8, Math.max(26, timeFs * 1.3), 'module_1');
 
         if (this.isVisible(state, 'sb_notifs')) {
-          let nx = tx + tw + 14;
+          const nOff = this.getOffset(state, 'sb_notifs');
+          let nx = tx + tw + 14 + nOff.x;
+          const nStartX = nx;
+          const nCy = cy + nOff.y;
           const sbSprite = raw.sb_notifs;
           if (sb.notifChat && sbSprite && sbSprite.complete && sbSprite.naturalWidth) {
-            ctx.drawImage(sbSprite, 0, 0, 16, 20, nx, cy - 13, 21, 26);
+            ctx.drawImage(sbSprite, 0, 0, 16, 20, nx, nCy - 13, 21, 26);
             nx += 28;
           }
           if (sb.notifSocial && sbSprite && sbSprite.complete && sbSprite.naturalWidth) {
-            ctx.drawImage(sbSprite, 17, 0, 17, 20, nx, cy - 13, 22, 26);
+            ctx.drawImage(sbSprite, 17, 0, 17, 20, nx, nCy - 13, 22, 26);
             nx += 28;
           }
           if (sb.notifNews && sbSprite && sbSprite.complete && sbSprite.naturalWidth) {
-            ctx.drawImage(sbSprite, 35, 0, 17, 20, nx, cy - 13, 22, 26);
+            ctx.drawImage(sbSprite, 35, 0, 17, 20, nx, nCy - 13, 22, 26);
             nx += 28;
           }
-          if (nx > tx + tw + 14) {
-            this.registerHit('sb_notifs', '状态栏通知图标', 'element', tx + tw + 10, cy - 14, nx - (tx + tw + 10), 28, 'module_1');
+          if (nx > nStartX) {
+            this.registerHit('sb_notifs', '状态栏通知图标', 'element', nStartX - 4, nCy - 14, nx - nStartX + 4, 28, 'module_1');
           }
         }
       }
@@ -1377,7 +1421,11 @@
           const avOff = this.getOffset(state, 'user_avatar');
           const avX = cardX + 20 + avOff.x;
           const avY = cardY + (userCardH - avSize) / 2 + avOff.y;
-          const avatarSrc = this.media.userAvatar || raw.user_avatar;
+          const libAv =
+            um.avatarCategory && global.LayaDefaults && typeof global.LayaDefaults.getAvatarFromLibrary === 'function'
+              ? global.LayaDefaults.getAvatarFromLibrary(um.avatarCategory, um.avatarIndex || 0)
+              : null;
+          const avatarSrc = this.media.userAvatar || libAv || raw.user_avatar;
 
           if (avatarSrc) {
             ctx.save();
@@ -1406,7 +1454,7 @@
           const nickOff = this.getOffset(state, 'user_nickname');
           const nx = row1CurX + nickOff.x;
           const ny = row1Y + nickOff.y;
-          const nickStr = um.nickname || '小猫/花泽类';
+          const nickStr = um.nickname !== undefined ? String(um.nickname) : '清玥🍷';
           const nickFs = this.getFontPx(state, 'user_nickname', 29);
           ctx.font = `700 ${nickFs}px ${FONT_SANS}`;
           ctx.fillStyle = '#ffffff';
@@ -1654,9 +1702,13 @@
       const rows = Math.max(1, Math.ceil(visibleCards.length / 2));
       const totalH = padY * 2 + rows * cardH + (rows - 1) * gap;
 
-      // 獲取上方用戶卡片同步過來的頭像與暱稱
-      const syncedAvatar = this.media.userAvatar || raw.user_avatar;
-      const syncedNickname = um.nickname || '小猫/花泽类';
+      // 获取上方用户卡片同步过来的头像与昵称
+      const libAvSync =
+        um.avatarCategory && global.LayaDefaults && typeof global.LayaDefaults.getAvatarFromLibrary === 'function'
+          ? global.LayaDefaults.getAvatarFromLibrary(um.avatarCategory, um.avatarIndex || 0)
+          : null;
+      const syncedAvatar = this.media.userAvatar || libAvSync || raw.user_avatar;
+      const syncedNickname = um.nickname !== undefined ? String(um.nickname) : '清玥🍷';
 
       ctx.save();
       (fm.cards || []).forEach((card, idx) => {
@@ -1963,6 +2015,7 @@
       const H = this.H;
       octx.clearRect(0, 0, W, H);
       this.deleteActionBox = null;
+      this.resizeActionBox = null;
       if (!uiState) return;
 
       this.playButtons.forEach((pb) => {
@@ -2054,8 +2107,8 @@
         const selTagY = b.y < 130 ? b.bottom + 38 : b.y - 10;
         const tagRect = this.drawGizmoTag(octx, `${b.label}`, b.x, selTagY, '#9333ea');
 
-        // 紧贴标签右侧绘制红色「✕ 隐藏」快捷点击按钮
-        const delText = '✕ 隐藏';
+        // 紧贴标签右侧绘制红色「✕ 删除」快捷点击按钮
+        const delText = '✕ 删除';
         octx.font = `700 17px ${FONT_SANS}`;
         const delW = octx.measureText(delText).width + 20;
         const delH = tagRect.h;
@@ -2081,6 +2134,33 @@
           w: delW + 8,
           h: delH + 8
         };
+
+        // 为自由添加元素在选中框右下角绘制拖动缩放手柄
+        if (b.key && b.key.startsWith('custom_el_')) {
+          const rx = b.x + b.w - 6;
+          const ry = b.y + b.h - 6;
+          const rSize = 24;
+          this.roundRect(octx, rx, ry, rSize, rSize, 6);
+          octx.fillStyle = '#0ea5e9';
+          octx.fill();
+          octx.strokeStyle = '#ffffff';
+          octx.lineWidth = 2;
+          octx.stroke();
+          octx.fillStyle = '#ffffff';
+          octx.font = `800 14px ${FONT_SANS}`;
+          octx.textAlign = 'center';
+          octx.textBaseline = 'middle';
+          octx.fillText('↘', rx + rSize / 2, ry + rSize / 2);
+          this.resizeActionBox = {
+            key: b.key,
+            cx: b.cx,
+            cy: b.cy,
+            x: rx - 6,
+            y: ry - 6,
+            w: rSize + 12,
+            h: rSize + 12
+          };
+        }
         octx.restore();
       }
 
@@ -2398,6 +2478,234 @@
         str = str.slice(0, -1);
       }
       return str + '…';
+    }
+
+    renderCustomElements(ctx, state, workspace, isFullTrans, isLight) {
+      const list = (state && Array.isArray(state.customElements) ? state.customElements : []).filter(
+        (el) => el && (el.workspace || 'store') === workspace
+      );
+      if (!list.length) return;
+
+      list.forEach((el) => {
+        const key = `custom_el_${el.id}`;
+        if (!this.isVisible(state, key)) return;
+        const off = this.getOffset(state, key);
+        const cx = (Number(el.x) || 400) + off.x;
+        const cy = (Number(el.y) || 300) + off.y;
+        const sc = Math.max(0.25, Math.min(4, Number(el.scale) || 1));
+        const rot = ((Number(el.rotation) || 0) * Math.PI) / 180;
+        const bgStyle = el.bgStyle || (el.type === 'box' ? 'red' : el.type === 'badge' ? 'purple' : 'none');
+
+        let hitW = 160;
+        let hitH = 60;
+        const typeNames = {
+          text: '自定义文字',
+          badge: '胶囊标签',
+          arrow: '指引箭头',
+          box: '高亮框',
+          image: '图片贴纸'
+        };
+        const shortTxt = el.text ? `「${String(el.text).replace(/\n+/g, ' ').slice(0, 10)}」` : '';
+        const hitLabel = `${typeNames[el.type] || '自定义元素'}${shortTxt}`;
+
+        ctx.save();
+        ctx.translate(cx, cy);
+        if (rot) ctx.rotate(rot);
+
+        if (el.type === 'text') {
+          const fs = Math.round(this.getFontPx(state, key, 38) * sc);
+          ctx.font = `800 ${fs}px ${FONT_SANS}`;
+          const lines = String(el.text || '点击输入文字').split(/\r?\n/);
+          const lineH = Math.round(fs * 1.28);
+          let maxW = 60;
+          lines.forEach((ln) => {
+            maxW = Math.max(maxW, ctx.measureText(ln).width);
+          });
+          const padX = bgStyle !== 'none' ? 24 : 12;
+          const padY = bgStyle !== 'none' ? 14 : 8;
+          hitW = maxW + padX * 2;
+          hitH = lines.length * lineH + padY * 2;
+
+          if (bgStyle !== 'none' && !isFullTrans) {
+            this.drawCustomPillBackdrop(ctx, -hitW / 2, -hitH / 2, hitW, hitH, Math.min(20, hitH / 2), bgStyle);
+          }
+
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          const textColor = el.color || (isLight && bgStyle === 'none' ? '#181029' : '#ffffff');
+          lines.forEach((ln, lIdx) => {
+            const ly = -((lines.length - 1) * lineH) / 2 + lIdx * lineH;
+            this.fillReadableText(ctx, ln, 0, ly, textColor, isFullTrans);
+          });
+        } else if (el.type === 'badge') {
+          const fs = Math.round(this.getFontPx(state, key, 24) * sc);
+          ctx.font = `700 ${fs}px ${FONT_SANS}`;
+          const txt = String(el.text || '🎙️ 在线连麦中');
+          const tw = ctx.measureText(txt).width;
+          hitW = Math.max(100, tw + 40);
+          hitH = Math.max(40, Math.round(fs * 1.95));
+          this.drawCustomPillBackdrop(ctx, -hitW / 2, -hitH / 2, hitW, hitH, hitH / 2, bgStyle === 'none' ? 'purple' : bgStyle);
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = el.color || '#ffffff';
+          ctx.fillText(txt, 0, 1);
+        } else if (el.type === 'arrow') {
+          const arrowLen = Math.round(132 * sc);
+          const headSize = Math.round(24 * sc);
+          const strokeCol =
+            el.color && el.color !== '#ffffff'
+              ? el.color
+              : bgStyle === 'purple'
+              ? '#c084fc'
+              : bgStyle === 'pink'
+              ? '#f472b6'
+              : '#fb7185';
+          ctx.shadowColor = strokeCol;
+          ctx.shadowBlur = 16;
+          ctx.strokeStyle = strokeCol;
+          ctx.fillStyle = strokeCol;
+          ctx.lineWidth = Math.max(4, Math.round(7 * sc));
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          const x0 = -arrowLen / 2;
+          const x1 = arrowLen / 2 - headSize * 0.3;
+          ctx.beginPath();
+          ctx.moveTo(x0, 0);
+          ctx.lineTo(x1, 0);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(arrowLen / 2 + 4, 0);
+          ctx.lineTo(x1 - headSize * 0.45, -headSize * 0.65);
+          ctx.lineTo(x1 - headSize * 0.45, headSize * 0.65);
+          ctx.closePath();
+          ctx.fill();
+
+          if (el.text) {
+            const fs = Math.round(this.getFontPx(state, key, 22) * sc);
+            ctx.font = `800 ${fs}px ${FONT_SANS}`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            this.fillReadableText(ctx, el.text, -12, -headSize * 0.8, el.color || '#ffffff', isFullTrans);
+          }
+          hitW = arrowLen + 36;
+          hitH = Math.max(54, Math.round(64 * sc));
+        } else if (el.type === 'box') {
+          hitW = Math.round((Number(el.w) || 260) * sc);
+          hitH = Math.round((Number(el.h) || 100) * sc);
+          const strokeCol =
+            bgStyle === 'purple'
+              ? '#c084fc'
+              : bgStyle === 'green'
+              ? '#34d399'
+              : bgStyle === 'pink'
+              ? '#f472b6'
+              : '#ef4444';
+          ctx.shadowColor = strokeCol;
+          ctx.shadowBlur = 14;
+          ctx.strokeStyle = strokeCol;
+          ctx.lineWidth = Math.max(3, Math.round(5 * sc));
+          this.roundRect(ctx, -hitW / 2, -hitH / 2, hitW, hitH, Math.min(20, hitH / 4));
+          ctx.stroke();
+
+          if (el.text) {
+            const fs = Math.round(this.getFontPx(state, key, 22) * sc);
+            ctx.font = `700 ${fs}px ${FONT_SANS}`;
+            const tagW = ctx.measureText(el.text).width + 20;
+            const tagH = Math.max(26, Math.round(fs * 1.45));
+            this.roundRect(ctx, -hitW / 2, -hitH / 2 - tagH - 4, tagW, tagH, 8);
+            ctx.fillStyle = strokeCol;
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(el.text, -hitW / 2 + tagW / 2, -hitH / 2 - tagH / 2 - 3);
+          }
+        } else if (el.type === 'image') {
+          hitW = Math.round((Number(el.w) || 180) * sc);
+          hitH = Math.round((Number(el.h) || 180) * sc);
+          let img = this.media && this.media.customElementImages && this.media.customElementImages[el.id];
+          if (!img && el.libCategory === 'app_logo') {
+            img = this.media && this.media.raw && this.media.raw.brand_laya;
+          } else if (!img && el.libCategory && global.LayaDefaults && typeof global.LayaDefaults.getAvatarFromLibrary === 'function') {
+            img = global.LayaDefaults.getAvatarFromLibrary(el.libCategory, el.libIndex || 0);
+          }
+          const shape = el.shape || 'round';
+          ctx.save();
+          if (shape === 'circle') {
+            ctx.beginPath();
+            ctx.arc(0, 0, Math.min(hitW, hitH) / 2, 0, Math.PI * 2);
+            ctx.clip();
+          } else if (shape === 'round') {
+            this.roundRect(ctx, -hitW / 2, -hitH / 2, hitW, hitH, Math.min(24, Math.min(hitW, hitH) * 0.16));
+            ctx.clip();
+          }
+          if (img && (img.complete === undefined || img.complete) && (img.naturalWidth || img.width)) {
+            if (shape === 'raw') {
+              this.drawContainImage(ctx, img, -hitW / 2, -hitH / 2, hitW, hitH);
+            } else {
+              this.drawCoverImage(ctx, img, -hitW / 2, -hitH / 2, hitW, hitH);
+            }
+          } else {
+            ctx.fillStyle = 'rgba(168, 85, 247, 0.25)';
+            ctx.fillRect(-hitW / 2, -hitH / 2, hitW, hitH);
+            ctx.fillStyle = '#e9d5ff';
+            ctx.font = `700 ${Math.max(14, Math.round(18 * sc))}px ${FONT_SANS}`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('🖼️ 图片贴纸', 0, 0);
+          }
+          ctx.restore();
+          if (shape === 'circle') {
+            ctx.strokeStyle = 'rgba(216, 180, 254, 0.85)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, Math.min(hitW, hitH) / 2, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+
+        ctx.restore();
+
+        // 计算旋转后外包框尺寸确保鼠标精确点选
+        const cosA = Math.abs(Math.cos(rot));
+        const sinA = Math.abs(Math.sin(rot));
+        const boundW = Math.max(40, Math.round(hitW * cosA + hitH * sinA));
+        const boundH = Math.max(36, Math.round(hitW * sinA + hitH * cosA));
+        this.registerHit(key, hitLabel, 'element', cx - boundW / 2, cy - boundH / 2, boundW, boundH, key);
+      });
+    }
+
+    drawCustomPillBackdrop(ctx, x, y, w, h, r, style) {
+      this.roundRect(ctx, x, y, w, h, r);
+      if (style === 'purple') {
+        const g = ctx.createLinearGradient(x, y, x + w, y + h);
+        g.addColorStop(0, 'rgba(147, 51, 234, 0.92)');
+        g.addColorStop(1, 'rgba(219, 39, 119, 0.92)');
+        ctx.fillStyle = g;
+        ctx.fill();
+      } else if (style === 'pink') {
+        const g = ctx.createLinearGradient(x, y, x + w, y + h);
+        g.addColorStop(0, 'rgba(244, 63, 94, 0.92)');
+        g.addColorStop(1, 'rgba(236, 72, 153, 0.92)');
+        ctx.fillStyle = g;
+        ctx.fill();
+      } else if (style === 'green') {
+        ctx.fillStyle = 'rgba(16, 185, 129, 0.25)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (style === 'red') {
+        ctx.fillStyle = 'rgba(225, 29, 72, 0.92)';
+        ctx.fill();
+      } else {
+        ctx.fillStyle = 'rgba(24, 15, 42, 0.78)';
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(192, 132, 252, 0.55)';
+        ctx.lineWidth = 1.8;
+        ctx.stroke();
+      }
     }
 
     roundRect(ctx, x, y, w, h, r) {

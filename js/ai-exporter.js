@@ -14,7 +14,7 @@
   }
 
   function getFilePrefix(state) {
-    return state && state.activeWorkspace === 'profile' ? 'Laya_Profile' : 'Laya_Store';
+    return state && state.activeWorkspace === 'profile' ? 'Profile_Poster' : 'Store_Poster';
   }
 
   // 缓存每个 <video> 的 WebAudio SourceNode，避免重复绑定报错
@@ -61,10 +61,143 @@
   }
 
   /**
+   * 智能异步截帧（若视频首帧全黑，自动跳至亮帧再识别）
+   */
+  async function extractMediaBase64Smart(mediaEl) {
+    if (!mediaEl) return null;
+    try {
+      const isVid = String(mediaEl.tagName || '').toUpperCase() === 'VIDEO';
+      if (isVid && mediaEl.readyState >= 2 && Number.isFinite(mediaEl.duration) && mediaEl.duration > 0.25) {
+        const probeBright = () => {
+          try {
+            const c = document.createElement('canvas');
+            c.width = 48;
+            c.height = 48;
+            const g = c.getContext('2d');
+            g.drawImage(mediaEl, 0, 0, 48, 48);
+            const d = g.getImageData(0, 0, 48, 48).data;
+            let s = 0;
+            for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2];
+            return s / (d.length / 4) / 3;
+          } catch (_) {
+            return 30;
+          }
+        };
+        if (probeBright() < 12) {
+          const origTime = mediaEl.currentTime || 0;
+          const tryTimes = [Math.min(0.45, mediaEl.duration * 0.2), Math.min(1.2, mediaEl.duration * 0.45)];
+          for (const t of tryTimes) {
+            await new Promise((res) => {
+              let done = false;
+              const finish = () => {
+                if (done) return;
+                done = true;
+                mediaEl.removeEventListener('seeked', finish);
+                res();
+              };
+              mediaEl.addEventListener('seeked', finish, { once: true });
+              setTimeout(finish, 420);
+              try {
+                mediaEl.currentTime = t;
+              } catch (_) {
+                finish();
+              }
+            });
+            if (probeBright() >= 12) break;
+          }
+          const res = extractMediaBase64(mediaEl);
+          try {
+            mediaEl.currentTime = origTime;
+          } catch (_) {}
+          if (res) return res;
+        }
+      }
+    } catch (_) {}
+    return extractMediaBase64(mediaEl);
+  }
+
+  /**
+   * 针对单个刚上传的视频或图片，自动识别画面内容生成一句简短自然的底部标题（4~14 字）
+   */
+  async function recognizeSingleMediaTitleWithAI(options) {
+    const { mediaEl, fileName, isTraditional, aiConfig } = options || {};
+    const langName = isTraditional ? '繁体中文' : '简体中文';
+    const conv = (s) =>
+      isTraditional && global.LayaPosterLang ? global.LayaPosterLang.convertString(s, true) : s;
+
+    const imgData = await extractMediaBase64Smart(mediaEl);
+    const hasCaller =
+      global.LayaProfileCenter && typeof global.LayaProfileCenter.callGeminiRequest === 'function';
+
+    if (imgData && hasCaller) {
+      try {
+        const promptText = [
+          '你是资深短视频社交平台内容运营。',
+          `请仔细观察这张${fileName ? `名为「${fileName}」的` : ''}视频截图/照片里的画面人物动作、表情、物品、穿搭或场景氛围，为卡片底部生成 1 句自然真实、抓人眼球的${langName}短视频标题。`,
+          '要求：',
+          '1. 长度严格控制在 4~14 个字左右（一句短话，口语化真实感，不要加书名号、不要加引号、不要加换行）。',
+          '2. 紧扣画面细节，避免空洞鸡汤（例如：深夜自拍破防瞬间 / 这甜度超标了吧 / 今日份氛围感大片）。',
+          `严格只返回 JSON：{"footerTitle":"..."}，使用${langName}。`
+        ].join('\n');
+
+        const apiResp = await global.LayaProfileCenter.callGeminiRequest(
+          aiConfig || {},
+          [{ text: promptText }, { inlineData: imgData }],
+          {
+            generationConfig: {
+              temperature: 0.8,
+              maxOutputTokens: 256,
+              responseMimeType: 'application/json'
+            }
+          }
+        );
+
+        let parsed = null;
+        if (typeof global.LayaProfileCenter.extractJsonFromGeminiResponse === 'function') {
+          parsed = global.LayaProfileCenter.extractJsonFromGeminiResponse(apiResp);
+        }
+        const title = parsed && String(parsed.footerTitle || parsed.title || '').trim();
+        if (title) {
+          return { footerTitle: conv(title.replace(/\n+/g, ' ').replace(/\*/g, '').slice(0, 22)), usedRemoteAI: true };
+        }
+      } catch (_) {}
+    }
+
+    // 离线 / 兜底智能拟题（优先利用有意义的中文/英文文件名，其次按媒体类型与横竖比抽自然文案）
+    const cleanName = String(fileName || '')
+      .replace(/\.[^.]+$/, '')
+      .replace(/[_-]+/g, ' ')
+      .trim();
+    const isGeneric = /^(IMG|VID|Screenshot|screen|clip|video|image|REC|DCIM|微信|QQ|抖音|\d{4,}|[a-f0-9]{12,})/i.test(cleanName);
+    if (cleanName && !isGeneric && cleanName.length >= 2 && cleanName.length <= 16) {
+      return { footerTitle: conv(cleanName), usedRemoteAI: false };
+    }
+
+    const isVid = mediaEl && String(mediaEl.tagName || '').toUpperCase() === 'VIDEO';
+    const vidPool = [
+      '这段原声反差绝了 ✨',
+      '深夜刷到直接沦陷',
+      '谁懂这一帧的心动感',
+      '状态在线的日常碎片',
+      '看一遍就上头的现场'
+    ];
+    const imgPool = [
+      '今日份氛围感自拍 ✨',
+      '这颜值状态太能打了',
+      '刚好捕捉到心动瞬间',
+      '宝藏女孩的日常碎片',
+      '光影满分的这一张 📸'
+    ];
+    const pool = isVid ? vidPool : imgPool;
+    const picked = pool[Math.floor(Math.random() * pool.length)];
+    return { footerTitle: conv(picked), usedRemoteAI: false };
+  }
+
+  /**
    * 调用 Gemini API（优先复用 LayaProfileCenter 的团队内置 Key / 多模型容错链，并兼容 Vertex AI / Studio / GAS 代理）
    */
   async function generateCardCopyWithGemini(options) {
-    const { apiKey, gasProxyUrl, topicPrompt, targetCards, mediaRegistry, isTraditional } = options;
+    const { apiKey, gasProxyUrl, topicPrompt, targetCards, mediaRegistry, isTraditional, includeOverlayText } = options;
     const resolved =
       global.LayaProfileCenter && typeof global.LayaProfileCenter.resolveGeminiConfig === 'function'
         ? global.LayaProfileCenter.resolveGeminiConfig({ apiKey, gasProxyUrl })
@@ -112,7 +245,7 @@
           }
         }
       );
-      return parseGeminiCardsJson(apiResp, count);
+      return parseGeminiCardsJson(apiResp, count, Boolean(includeOverlayText));
     }
 
     const normalizedParts = parts.map((p) =>
@@ -143,7 +276,7 @@
       if (proxyJson.error) {
         throw new Error(proxyJson.error.message || JSON.stringify(proxyJson.error));
       }
-      return parseGeminiCardsJson(proxyJson, count);
+      return parseGeminiCardsJson(proxyJson, count, Boolean(includeOverlayText));
     }
 
     if (!trimmedKey) {
@@ -186,7 +319,7 @@
           lastErr = new Error(msg);
           continue;
         }
-        const parsed = parseGeminiCardsJson(data, count);
+        const parsed = parseGeminiCardsJson(data, count, Boolean(includeOverlayText));
         if (parsed && parsed.length > 0) {
           return parsed;
         }
@@ -198,7 +331,7 @@
     throw lastErr || new Error('Gemini API 请求未返回有效文案');
   }
 
-  function parseGeminiCardsJson(apiResponse, expectedCount) {
+  function parseGeminiCardsJson(apiResponse, expectedCount, includeOverlayText) {
     const candidates = apiResponse && apiResponse.candidates;
     if (!candidates || !candidates.length) {
       throw new Error('模型未返回候选内容');
@@ -239,10 +372,11 @@
     const normalized = [];
     for (let i = 0; i < expectedCount; i++) {
       const src = arr[i % arr.length] || {};
+      const titleStr = String(src.overlayTitle || '深夜连麦\n一秒沦陷的声音').replace(/\\n/g, '\n');
       normalized.push({
-        overlayTitle: String(src.overlayTitle || '深夜连麦\n一秒沦陷的声音').replace(/\\n/g, '\n'),
-        overlaySubtitle: String(src.overlaySubtitle || '这种音色真的顶不住'),
-        footerTitle: String(src.footerTitle || String(src.overlayTitle || '').replace(/\n+/g, ' ').replace(/\*/g, '')),
+        overlayTitle: includeOverlayText ? titleStr : '',
+        overlaySubtitle: includeOverlayText ? String(src.overlaySubtitle || '这种音色真的顶不住') : '',
+        footerTitle: String(src.footerTitle || titleStr.replace(/\n+/g, ' ').replace(/\*/g, '')),
         likes: String(src.likes || Math.floor(Math.random() * 2600 + 800))
       });
     }
@@ -250,9 +384,9 @@
   }
 
   /**
-   * 内置高质量本地靈感备选库（当离线或无网络时也可一键救急体验）
+   * 内置高质量本地灵感备选库（默认仅更新底部标题与点赞，不往画面添加字幕）
    */
-  function generateLocalFallbackCopy(topicPrompt, count, isTraditional) {
+  function generateLocalFallbackCopy(topicPrompt, count, isTraditional, includeOverlayText) {
     const pool = [
       {
         overlayTitle: '耳机党慎入\n一开口就*沦陷*了',
@@ -302,8 +436,8 @@
     for (let i = 0; i < count; i++) {
       const base = shuffled[i % shuffled.length];
       const item = {
-        overlayTitle: conv(base.overlayTitle),
-        overlaySubtitle: conv(base.overlaySubtitle),
+        overlayTitle: includeOverlayText ? conv(base.overlayTitle) : '',
+        overlaySubtitle: includeOverlayText ? conv(base.overlaySubtitle) : '',
         footerTitle: conv(base.footerTitle),
         likes: base.likes
       };
@@ -671,6 +805,7 @@
   global.LayaAIExporter = {
     generateCardCopyWithGemini,
     generateLocalFallbackCopy,
+    recognizeSingleMediaTitleWithAI,
     exportScreenshotPNG,
     exportVideoMP4
   };
