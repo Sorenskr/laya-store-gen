@@ -16,8 +16,12 @@
     floatingLogo: null,
     playStrip: null,
     userAvatar: null,
+    profileBg: null,
+    profAvatar: null,
     customNavIcons: {},
     cardMedia: {},
+    profCardMedia: {},
+    profCommentAvatars: {},
     raw: global.LayaDefaults.createRawImageMap()
   };
 
@@ -28,6 +32,9 @@
   let activeInlineHandler = null;
   let activeInlineFontKey = null;
   let pendingDirectFileCallback = null;
+  let lastCanvasSize = { w: 1920, h: 1080 };
+  let autoAiBatchTimer = 0;
+  let pendingAutoAiPostIds = new Set();
 
   function persistState() {
     if (global.LayaPersistence) {
@@ -56,9 +63,18 @@
       if (!rec || !rec.slotKey || !rec.blob) continue;
       const key = rec.slotKey;
 
-      if (key === 'appIcon' || key === 'storeLogo' || key === 'floatingLogo' || key === 'playStrip' || key === 'userAvatar') {
+      if (
+        key === 'appIcon' ||
+        key === 'storeLogo' ||
+        key === 'floatingLogo' ||
+        key === 'playStrip' ||
+        key === 'userAvatar' ||
+        key === 'profileBg' ||
+        key === 'profAvatar'
+      ) {
         loadBlobAsImage(rec.blob, (img) => {
           mediaRegistry[key] = img;
+          if (key === 'profAvatar') refreshProfileAvatarPreview();
         });
       } else if (key.startsWith('navIcon:')) {
         const navId = key.slice('navIcon:'.length);
@@ -72,6 +88,19 @@
         if (card) {
           mountCardMediaBlob(card, rec.blob, rec.fileName || card.mediaName || '已保存媒体', false);
         }
+      } else if (key.startsWith('profCardMedia:')) {
+        const postId = key.slice('profCardMedia:'.length);
+        const posts = (state.profileCenter && state.profileCenter.posts) || [];
+        const post = posts.find((p) => p.id === postId);
+        if (post) {
+          mountProfPostMediaBlob(post, rec.blob, rec.fileName || post.mediaName || '已保存媒体', false);
+        }
+      } else if (key.startsWith('profCmtAv:')) {
+        const cmtId = key.slice('profCmtAv:'.length);
+        loadBlobAsImage(rec.blob, (img) => {
+          mediaRegistry.profCommentAvatars[cmtId] = img;
+          renderProfileCommentsEditor();
+        });
       }
     }
   }
@@ -114,6 +143,9 @@
 
     bindInlineCanvasEditor();
     bindToolbarEvents();
+    bindWorkspaceModeBarEvents();
+    bindAvatarLibraryModal();
+    bindProfileControlEvents();
     bindPanelAccordion();
     bindStaticControlInputs();
     syncStaticInputsFromState();
@@ -123,9 +155,37 @@
     renderHiddenElementsManager();
     renderDynamicNavControls();
     renderDynamicFeedCards();
-    renderPerTextFontList();
+    renderProfilePanelEditors();
+    applyWorkspaceMode(state.activeWorkspace === 'profile' ? 'profile' : 'store', true);
     updateExportModeHint();
     fitStageToViewport();
+
+    // 9:16 竖屏个人中心支持滚轮直接上下滚动内容预览
+    overlayCanvas.addEventListener(
+      'wheel',
+      (e) => {
+        if (
+          state.activeWorkspace === 'profile' &&
+          state.profileCenter &&
+          state.profileCenter.viewportMode === 'mobile'
+        ) {
+          e.preventDefault();
+          const maxScroll = Math.max(100, renderer.lastProfileMaxScroll || 1600);
+          const cur = Number(state.profileCenter.scrollY) || 0;
+          const next = Math.max(0, Math.min(maxScroll, cur + Math.round(e.deltaY * 0.85)));
+          state.profileCenter.scrollY = next;
+          const rng = document.getElementById('rngProfScrollY');
+          if (rng) {
+            rng.max = String(maxScroll);
+            rng.value = next;
+          }
+          const badge = document.querySelector('[data-val-for="profileCenter.scrollY"]');
+          if (badge) badge.textContent = next;
+          persistState();
+        }
+      },
+      { passive: false }
+    );
 
     // 异步恢复上次上传的所有图片与 MP4 视频
     restorePersistedMediaBlobs();
@@ -137,8 +197,26 @@
       }
     });
 
+    let lastSyncedProfMaxScroll = -1;
     const tick = () => {
       renderer.render(state);
+      if (stageCanvas.width !== lastCanvasSize.w || stageCanvas.height !== lastCanvasSize.h) {
+        lastCanvasSize.w = stageCanvas.width;
+        lastCanvasSize.h = stageCanvas.height;
+        fitStageToViewport();
+      }
+      if (
+        state.activeWorkspace === 'profile' &&
+        state.profileCenter &&
+        state.profileCenter.viewportMode === 'mobile'
+      ) {
+        const nextMax = Math.max(100, Math.round(renderer.lastProfileMaxScroll || 0));
+        if (nextMax !== lastSyncedProfMaxScroll) {
+          lastSyncedProfMaxScroll = nextMax;
+          const rng = document.getElementById('rngProfScrollY');
+          if (rng) rng.max = String(nextMax);
+        }
+      }
       renderer.renderOverlay(interaction.uiState);
       requestAnimationFrame(tick);
     };
@@ -148,17 +226,23 @@
   function fitStageToViewport() {
     const wrap = document.getElementById('stageViewport');
     const shell = document.getElementById('phoneStageShell');
+    const stageCanvas = document.getElementById('stageCanvas');
     const zoomLabel = document.getElementById('zoomPercentLabel');
     if (!wrap || !shell) return;
 
-    const stageW = global.LayaDefaults.STAGE_WIDTH;
-    const stageH = global.LayaDefaults.STAGE_HEIGHT;
+    const isProfile = state.activeWorkspace === 'profile';
+    const stageW = (stageCanvas && stageCanvas.width) || (isProfile ? 1080 : global.LayaDefaults.STAGE_WIDTH);
+    const stageH = (stageCanvas && stageCanvas.height) || (isProfile ? 1920 : global.LayaDefaults.STAGE_HEIGHT);
 
     let scale;
     if (zoomMode === 'fit') {
       const availW = Math.max(320, wrap.clientWidth - 48);
       const availH = Math.max(260, wrap.clientHeight - 48);
-      scale = Math.min(availW / stageW, availH / stageH, 0.92);
+      if (isProfile && (!state.profileCenter || state.profileCenter.viewportMode !== 'mobile')) {
+        scale = Math.max(0.32, Math.min(availW / stageW, 0.56));
+      } else {
+        scale = Math.min(availW / stageW, availH / stageH, 0.92);
+      }
     } else {
       scale = Number(zoomMode) || 0.55;
     }
@@ -167,6 +251,7 @@
     const cssH = Math.round(stageH * scale);
     shell.style.width = `${cssW}px`;
     shell.style.height = `${cssH}px`;
+    wrap.classList.toggle('is-profile-long', isProfile && cssH > wrap.clientHeight - 40);
     if (zoomLabel) {
       zoomLabel.textContent = `${Math.round(scale * 100)}%`;
     }
@@ -218,6 +303,7 @@
     syncStaticInputsFromState();
     renderDynamicNavControls();
     renderDynamicFeedCards();
+    renderProfilePanelEditors();
     renderPerTextFontList();
     persistState();
     showToast(
@@ -240,6 +326,7 @@
     updateSelectedElementBar();
     renderHiddenElementsManager();
     renderDynamicFeedCards();
+    renderProfilePanelEditors();
     persistState();
     showToast(`🗑️ 已隐藏「${label || key}」，可在右侧随时恢复`);
   }
@@ -250,6 +337,7 @@
     delete state.hiddenElements[key];
     renderHiddenElementsManager();
     renderDynamicFeedCards();
+    renderProfilePanelEditors();
     persistState();
     showToast(`👁️ 已恢复显示「${lbl}」`);
   }
@@ -291,18 +379,21 @@
   // 顶部工具栏与全局按钮事件
   // ===========================================================================
   function bindToolbarEvents() {
-    const stageW = global.LayaDefaults.STAGE_WIDTH;
+    const getLiveStageW = () => {
+      const sc = document.getElementById('stageCanvas');
+      return (sc && sc.width) || global.LayaDefaults.STAGE_WIDTH;
+    };
 
     document.getElementById('btnZoomOut').addEventListener('click', () => {
       const shell = document.getElementById('phoneStageShell');
-      const cur = shell.clientWidth / stageW;
+      const cur = shell.clientWidth / getLiveStageW();
       zoomMode = Math.max(0.22, +(cur - 0.06).toFixed(2));
       fitStageToViewport();
     });
 
     document.getElementById('btnZoomIn').addEventListener('click', () => {
       const shell = document.getElementById('phoneStageShell');
-      const cur = shell.clientWidth / stageW;
+      const cur = shell.clientWidth / getLiveStageW();
       zoomMode = Math.min(1.0, +(cur + 0.06).toFixed(2));
       fitStageToViewport();
     });
@@ -375,6 +466,7 @@
       state.hiddenElements = {};
       renderHiddenElementsManager();
       renderDynamicFeedCards();
+      renderProfilePanelEditors();
       persistState();
       showToast('已恢复显示全部隐藏的元素');
     });
@@ -428,6 +520,24 @@
     });
 
     const handleRandomStatus = () => {
+      if (state.activeWorkspace === 'profile' && state.profileCenter) {
+        const rnd = global.LayaDefaults.randomizeStatusBar({});
+        const hdr = state.profileCenter.header;
+        hdr.showStatusBar = true;
+        hdr.time = rnd.time;
+        hdr.battery = rnd.battery;
+        hdr.charging = rnd.charging;
+        hdr.wifi = rnd.wifi;
+        hdr.dualSim = rnd.dualSim;
+        hdr.signal1 = rnd.signal1;
+        hdr.signal2 = rnd.signal2;
+        hdr.networkType = rnd.networkType;
+        hdr.showLayaNotif = true;
+        syncStaticInputsFromState();
+        persistState();
+        showToast(`🎲 已随机个人中心顶部状态栏（${hdr.time} · ${hdr.networkType} · 电量 ${hdr.battery}%）`);
+        return;
+      }
       state.statusBar = global.LayaDefaults.randomizeStatusBar(state.statusBar);
       syncStaticInputsFromState();
       persistState();
@@ -450,8 +560,13 @@
     });
 
     document.getElementById('btnAiCopyTop').addEventListener('click', () => {
-      openAccordionSection('sec-feed', true);
-      handleGenerateAICopy();
+      if (state.activeWorkspace === 'profile') {
+        openAccordionSection('prof-sec-feed', true);
+        handleProfileAiFeedComments();
+      } else {
+        openAccordionSection('sec-feed', true);
+        handleGenerateAICopy();
+      }
     });
     document.getElementById('btnAiCopyPanel').addEventListener('click', handleGenerateAICopy);
 
@@ -470,13 +585,14 @@
     document.getElementById('btnExportPNG').addEventListener('click', async () => {
       try {
         const stageCanvas = document.getElementById('stageCanvas');
-        await global.LayaAIExporter.exportScreenshotPNG(stageCanvas, renderer, state);
+        const info = await global.LayaAIExporter.exportScreenshotPNG(stageCanvas, renderer, state);
         const isTrans =
           state.layout.canvasTheme === 'transparent' || state.layout.canvasTheme === 'full-transparent';
+        const dimsStr = `${(info && info.w) || stageCanvas.width}×${(info && info.h) || stageCanvas.height}`;
         showToast(
           isTrans
-            ? '✅ 已导出 1920×1080 真透明背景 PNG（可直接拖入剪映/PS叠加）'
-            : '✅ 已导出 1920×1080 高清横屏 PNG 截图'
+            ? `✅ 已导出 ${dimsStr} 真透明背景 PNG（可直接拖入剪映/PS叠加）`
+            : `✅ 已导出 ${dimsStr} 高清 PNG 截图`
         );
       } catch (err) {
         showToast(`导出截图失败：${err.message}`, true);
@@ -514,7 +630,8 @@
       renderHiddenElementsManager();
       renderDynamicNavControls();
       renderDynamicFeedCards();
-      renderPerTextFontList();
+      renderProfilePanelEditors();
+      applyWorkspaceMode('store', true);
       updateSelectedElementBar();
       updateExportModeHint();
       showToast('已清空缓存并恢复全部默认设置');
@@ -723,8 +840,22 @@
         }
         setByPath(state, path, val);
 
+        // 同步绑定相同 data-bind 路径的其余控件（如顶条与右侧面板共用字段）
+        document.querySelectorAll(`[data-bind="${path}"]`).forEach((otherEl) => {
+          if (otherEl === el) return;
+          if (otherEl.type === 'checkbox') otherEl.checked = Boolean(val);
+          else otherEl.value = val;
+        });
+
         if (path === 'layout.canvasTheme') {
           syncStageTransparencyClass();
+        } else if (path === 'profileCenter.viewportMode') {
+          syncProfileViewportUI();
+          renderer.ensureCanvasDimensions(state);
+          fitStageToViewport();
+          updateExportModeHint();
+        } else if (path === 'profileCenter.user.avatarCategory' || path === 'profileCenter.user.avatarIndex') {
+          refreshProfileAvatarPreview();
         } else if (path === 'layout.globalFontScale') {
           syncGlobalFontScaleLabels();
           updateSelectedElementBar();
@@ -848,6 +979,11 @@
       removePersistedMedia('userAvatar');
       showToast('已恢复默认用户头像');
     });
+
+    const btnOpenStoreAvatarLib = document.getElementById('btnOpenStoreAvatarLib');
+    if (btnOpenStoreAvatarLib) {
+      btnOpenStoreAvatarLib.addEventListener('click', openAvatarLibraryForStoreUser);
+    }
 
     document.getElementById('fileTrophyIcon').addEventListener('change', (e) => {
       const file = e.target.files && e.target.files[0];
@@ -1324,7 +1460,9 @@
   }
 
   function toggleCardVideoPlayback(cardId) {
-    const entry = mediaRegistry.cardMedia[cardId];
+    const isProf = String(cardId).startsWith('prof:');
+    const realId = isProf ? String(cardId).slice(5) : cardId;
+    const entry = isProf ? mediaRegistry.profCardMedia[realId] : mediaRegistry.cardMedia[realId];
     if (!entry || entry.type !== 'video' || !entry.el) return;
     const v = entry.el;
     if (v.paused) {
@@ -1335,7 +1473,8 @@
     } else {
       v.pause();
     }
-    renderDynamicFeedCards();
+    if (isProf) renderProfilePostsEditor();
+    else renderDynamicFeedCards();
   }
 
   function disposeCardMedia(cardId) {
@@ -1352,14 +1491,32 @@
     delete mediaRegistry.cardMedia[cardId];
   }
 
+  function disposeProfPostMedia(postId) {
+    const entry = mediaRegistry.profCardMedia[postId];
+    if (!entry) return;
+    if (entry.type === 'video' && entry.el) {
+      entry.el.pause();
+      entry.el.removeAttribute('src');
+      entry.el.load();
+    }
+    if (entry.url) {
+      URL.revokeObjectURL(entry.url);
+    }
+    delete mediaRegistry.profCardMedia[postId];
+  }
+
   function cleanupAllUploadedMedia() {
     mediaRegistry.appIcon = null;
     mediaRegistry.storeLogo = null;
     mediaRegistry.floatingLogo = null;
     mediaRegistry.playStrip = null;
     mediaRegistry.userAvatar = null;
+    mediaRegistry.profileBg = null;
+    mediaRegistry.profAvatar = null;
     mediaRegistry.customNavIcons = {};
+    mediaRegistry.profCommentAvatars = {};
     Object.keys(mediaRegistry.cardMedia).forEach((cid) => disposeCardMedia(cid));
+    Object.keys(mediaRegistry.profCardMedia).forEach((pid) => disposeProfPostMedia(pid));
   }
 
   // ===========================================================================
@@ -1637,9 +1794,30 @@
     }
 
     if (key === 'user_avatar') {
-      closeInlineEditor();
-      triggerDirectFileUpload('image/*', (file) => {
-        saveAndApplyImageSlot('userAvatar', file, 'user_avatar', '👤 已更新并保存个人头像（下方卡片已同步）');
+      openInlineEditorPopover({
+        title: '个人同步头像（商店名片 + 卡片头像）',
+        initialValue: null,
+        clientX,
+        clientY,
+        extraButtons: [
+          {
+            text: '🖼️ 从 450+ 头像库挑选',
+            primary: true,
+            onClick: () => {
+              closeInlineEditor();
+              openAvatarLibraryForStoreUser();
+            }
+          },
+          {
+            text: '📁 上传本地图片',
+            onClick: () => {
+              closeInlineEditor();
+              triggerDirectFileUpload('image/*', (file) => {
+                saveAndApplyImageSlot('userAvatar', file, 'user_avatar', '👤 已更新并保存个人头像（下方卡片已同步）');
+              });
+            }
+          }
+        ]
       });
       return;
     }
@@ -1885,8 +2063,15 @@
           },
           extraButtons: [
             {
-              text: '👤 上传替换头像',
+              text: '🖼️ 从头像库挑选',
               primary: true,
+              onClick: () => {
+                closeInlineEditor();
+                openAvatarLibraryForStoreUser();
+              }
+            },
+            {
+              text: '👤 上传替换头像',
               onClick: () => {
                 closeInlineEditor();
                 triggerDirectFileUpload('image/*', (file) => {
@@ -1897,12 +2082,61 @@
           ]
         });
       }
+      return;
+    }
+
+    // ==================== 个人中心画布直点编辑与交互 ====================
+    if (handleProfileDirectCanvasClick(hit, clientX, clientY)) {
+      return;
     }
   }
 
   function handleDirectCanvasFileDrop(hit, file) {
     if (!file) return;
     const key = hit ? hit.key : '';
+
+    if (state.activeWorkspace === 'profile') {
+      const pc = state.profileCenter;
+      if (key === 'prof_bg_banner' && file.type.startsWith('image/')) {
+        loadBlobAsImage(file, (img) => {
+          mediaRegistry.profileBg = img;
+          pc.header.bgStyle = 'custom';
+          persistMedia('profileBg', file);
+          syncStaticInputsFromState();
+          persistState();
+          showToast('🖼️ 已拖放替换个人主页背景图片');
+        });
+        return;
+      }
+      if (key === 'prof_avatar' && file.type.startsWith('image/')) {
+        loadBlobAsImage(file, (img) => {
+          mediaRegistry.profAvatar = img;
+          persistMedia('profAvatar', file);
+          refreshProfileAvatarPreview();
+          showToast('👤 已拖放更新个人主页头像');
+        });
+        return;
+      }
+      if (key.startsWith('prof_cmt_avatar_') && file.type.startsWith('image/')) {
+        const cmtId = key.replace('prof_cmt_avatar_', '');
+        loadBlobAsImage(file, (img) => {
+          mediaRegistry.profCommentAvatars[cmtId] = img;
+          persistMedia(`profCmtAv:${cmtId}`, file);
+          renderProfileCommentsEditor();
+          showToast('👤 已替换评论头像');
+        });
+        return;
+      }
+      if (file.type.startsWith('video/') || file.type.startsWith('image/')) {
+        let targetPost = pc.posts.find((p) => key && key.includes(p.id));
+        if (!targetPost) {
+          targetPost = createBlankProfPost(pc.posts.length + 1);
+          pc.posts.unshift(targetPost);
+        }
+        handleProfPostMediaUpload(targetPost, file);
+      }
+      return;
+    }
 
     if (file.type.startsWith('video/')) {
       let targetCard = state.feedModule.cards[0];
@@ -1935,12 +2169,28 @@
   }
 
   function updateExportModeHint() {
-    const hasAnyVideo = Object.values(mediaRegistry.cardMedia).some((m) => m && m.type === 'video');
     const hintBadge = document.getElementById('exportModeBadge');
     const mp4Btn = document.getElementById('btnExportMP4');
     const pngBtn = document.getElementById('btnExportPNG');
     if (!hintBadge) return;
 
+    if (state.activeWorkspace === 'profile') {
+      const hasAnyProfVideo = Object.values(mediaRegistry.profCardMedia).some((m) => m && m.type === 'video');
+      const isMobile = state.profileCenter && state.profileCenter.viewportMode === 'mobile';
+      if (hasAnyProfVideo) {
+        hintBadge.textContent = '🎬 个人中心动态模式（含视频）';
+        hintBadge.classList.add('video-active');
+        mp4Btn.classList.add('pulse-highlight');
+        pngBtn.classList.remove('pulse-highlight');
+      } else {
+        hintBadge.textContent = isMobile ? '📱 个人中心（9:16 竖屏）' : '📜 个人中心（长图瀑布流）';
+        hintBadge.classList.remove('video-active');
+        mp4Btn.classList.remove('pulse-highlight');
+      }
+      return;
+    }
+
+    const hasAnyVideo = Object.values(mediaRegistry.cardMedia).some((m) => m && m.type === 'video');
     if (hasAnyVideo) {
       hintBadge.textContent = '🎬 动态视频模式（已上传 MP4）';
       hintBadge.classList.add('video-active');
@@ -1981,7 +2231,15 @@
     const targetCards = getTargetCardsForAI();
     if (!targetCards.length) return;
 
-    if (!String(state.aiConfig.apiKey || '').trim() && !String(state.aiConfig.gasProxyUrl || '').trim()) {
+    const resolvedAi =
+      global.LayaProfileCenter && typeof global.LayaProfileCenter.resolveGeminiConfig === 'function'
+        ? global.LayaProfileCenter.resolveGeminiConfig(state.aiConfig)
+        : {
+            apiKey: String((state.aiConfig && state.aiConfig.apiKey) || '').trim(),
+            gasProxyUrl: String((state.aiConfig && state.aiConfig.gasProxyUrl) || '').trim()
+          };
+
+    if (!resolvedAi.apiKey && !resolvedAi.gasProxyUrl) {
       const generated = global.LayaAIExporter.generateLocalFallbackCopy(
         state.aiConfig.topicPrompt,
         targetCards.length,
@@ -2030,13 +2288,16 @@
     const customSecInput = document.getElementById('inpExportDuration');
     const customSec = customSecInput ? Number(customSecInput.value) || 0 : 0;
 
+    const stageCanvas = document.getElementById('stageCanvas');
+    const curW = (stageCanvas && stageCanvas.width) || 1920;
+    const curH = (stageCanvas && stageCanvas.height) || 1080;
+
     modal.classList.remove('hidden');
     barFill.style.width = '2%';
-    pctText.textContent = '准备合成 1920×1080 画面与音轨... 0%';
+    pctText.textContent = `准备合成 ${curW}×${curH} 画面与音轨... 0%`;
 
     currentExportAbort = {};
     try {
-      const stageCanvas = document.getElementById('stageCanvas');
       const result = await global.LayaAIExporter.exportVideoMP4({
         stageCanvas,
         renderer,
@@ -2046,7 +2307,7 @@
         abortSignal: currentExportAbort,
         onProgress: (pct) => {
           barFill.style.width = `${pct}%`;
-          pctText.textContent = `正在渲染导出 1920×1080 横屏视频... ${pct}%`;
+          pctText.textContent = `正在渲染导出 ${curW}×${curH} 视频... ${pct}%`;
         }
       });
       showToast(`🎬 导出完成（${result.ext.toUpperCase()} · 约 ${Math.round(result.durationSec)} 秒）`);
@@ -2057,6 +2318,1536 @@
       setTimeout(() => {
         modal.classList.add('hidden');
       }, 400);
+    }
+  }
+
+  // ===========================================================================
+  // 双栏工作台切换（商店截图生成器 ⇄ Laya 风格个人中心）
+  // ===========================================================================
+  function applyWorkspaceMode(mode, skipSave) {
+    const nextMode = mode === 'profile' ? 'profile' : 'store';
+    state.activeWorkspace = nextMode;
+    const isProfile = nextMode === 'profile';
+
+    document.querySelectorAll('[data-workspace-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-workspace-mode') === nextMode);
+    });
+
+    const profTools = document.getElementById('profileBarTools');
+    const storeSticky = document.getElementById('storeStickyNav');
+    const profSticky = document.getElementById('profileStickyNav');
+    const storeExtra = document.getElementById('storeSharedExtra');
+    const storeSecs = document.getElementById('storeControlSections');
+    const profSecs = document.getElementById('profileControlSections');
+    const shell = document.getElementById('phoneStageShell');
+    const dragScopeSel = document.getElementById('selDragScope');
+
+    if (profTools) profTools.classList.toggle('hidden', !isProfile);
+    if (storeSticky) storeSticky.classList.toggle('hidden', isProfile);
+    if (profSticky) profSticky.classList.toggle('hidden', !isProfile);
+    if (storeExtra) storeExtra.classList.toggle('hidden', isProfile);
+    if (storeSecs) storeSecs.classList.toggle('hidden', isProfile);
+    if (profSecs) profSecs.classList.toggle('hidden', !isProfile);
+    if (shell) shell.classList.toggle('is-profile-mode', isProfile);
+
+    if (dragScopeSel) {
+      dragScopeSel.disabled = isProfile;
+      if (isProfile) {
+        dragScopeSel.value = 'element';
+        interaction.dragMode = 'element';
+      }
+    }
+
+    if (interaction) {
+      interaction.uiState.selectedBox = null;
+      interaction.uiState.hoveredBox = null;
+      interaction.uiState.guides = [];
+    }
+    closeInlineEditor();
+    updateSelectedElementBar();
+    syncProfileViewportUI();
+    renderer.ensureCanvasDimensions(state);
+    const sc = document.getElementById('stageCanvas');
+    if (sc) {
+      lastCanvasSize.w = sc.width;
+      lastCanvasSize.h = sc.height;
+    }
+    zoomMode = 'fit';
+    fitStageToViewport();
+    renderPerTextFontList();
+    updateExportModeHint();
+    if (!skipSave) persistState();
+  }
+
+  function syncProfileViewportUI() {
+    const isMobile = Boolean(state.profileCenter && state.profileCenter.viewportMode === 'mobile');
+    const box = document.getElementById('profScrollControlBox');
+    if (box) box.classList.toggle('hidden', !isMobile);
+  }
+
+  function bindWorkspaceModeBarEvents() {
+    document.querySelectorAll('[data-workspace-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const m = btn.getAttribute('data-workspace-mode');
+        applyWorkspaceMode(m);
+        showToast(m === 'profile' ? '👤 已切换至「Laya 风格个人中心」工作台' : '🏪 已切换至「Laya 商店截图生成器」');
+      });
+    });
+
+    const bPickAv = document.getElementById('btnBarPickAvatar');
+    if (bPickAv) bPickAv.addEventListener('click', () => openAvatarLibraryForProfileUser());
+    const bAiBg = document.getElementById('btnBarAiBg');
+    if (bAiBg) bAiBg.addEventListener('click', handleProfileAiBg);
+    const bAiPer = document.getElementById('btnBarAiPersona');
+    if (bAiPer) bAiPer.addEventListener('click', handleProfileAiPersona);
+    const bAiFeed = document.getElementById('btnBarAiFeedComments');
+    if (bAiFeed) bAiFeed.addEventListener('click', () => handleProfileAiFeedComments());
+  }
+
+  // ===========================================================================
+  // 450+ 离线高清头像库可视化选择弹窗
+  // ===========================================================================
+  const AVATAR_CAT_META = [
+    { key: 'beauties', label: '👩 女生真人' },
+    { key: 'guys', label: '👨 男生真人' },
+    { key: 'pets', label: '🐾 萌宠' },
+    { key: 'vibes', label: '🌄 氛围图' },
+    { key: 'anime', label: '🌸 二次元' },
+    { key: 'cartoons', label: '🎨 卡通' },
+    { key: 'memes', label: '😄 趣味' }
+  ];
+
+  let avatarModalCtx = {
+    activeCat: 'beauties',
+    selectedIdx: 0,
+    onSelect: null,
+    onUploadFile: null
+  };
+
+  function bindAvatarLibraryModal() {
+    const modal = document.getElementById('avatarLibraryModal');
+    const closeBtn = document.getElementById('btnCloseAvatarLib');
+    const randBtn = document.getElementById('btnAvatarLibRandom');
+    const upInp = document.getElementById('fileAvatarLibUpload');
+
+    if (closeBtn) closeBtn.addEventListener('click', closeAvatarLibraryModal);
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeAvatarLibraryModal();
+      });
+    }
+    if (randBtn) {
+      randBtn.addEventListener('click', () => {
+        const db = global.LAYA_ASIAN_AVATARS || {};
+        const arr = db[avatarModalCtx.activeCat] || [];
+        if (!arr.length) return;
+        const rIdx = Math.floor(Math.random() * arr.length);
+        if (typeof avatarModalCtx.onSelect === 'function') {
+          avatarModalCtx.onSelect(avatarModalCtx.activeCat, rIdx, arr[rIdx]);
+        }
+        closeAvatarLibraryModal();
+      });
+    }
+    if (upInp) {
+      upInp.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file && typeof avatarModalCtx.onUploadFile === 'function') {
+          avatarModalCtx.onUploadFile(file);
+        }
+        e.target.value = '';
+        closeAvatarLibraryModal();
+      });
+    }
+  }
+
+  function closeAvatarLibraryModal() {
+    const modal = document.getElementById('avatarLibraryModal');
+    if (modal) modal.classList.add('hidden');
+  }
+
+  function renderAvatarLibraryModalContent() {
+    const catBar = document.getElementById('avatarLibCategoryBar');
+    const grid = document.getElementById('avatarLibGrid');
+    const db = global.LAYA_ASIAN_AVATARS || {};
+    if (!catBar || !grid) return;
+
+    catBar.innerHTML = '';
+    AVATAR_CAT_META.forEach((c) => {
+      const list = db[c.key] || [];
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = `pill-radio ${avatarModalCtx.activeCat === c.key ? 'active' : ''}`;
+      btn.textContent = `${c.label} (${list.length})`;
+      btn.addEventListener('click', () => {
+        avatarModalCtx.activeCat = c.key;
+        renderAvatarLibraryModalContent();
+      });
+      catBar.appendChild(btn);
+    });
+
+    grid.innerHTML = '';
+    const list = db[avatarModalCtx.activeCat] || [];
+    list.forEach((src, idx) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = `avatar-lib-item ${idx === avatarModalCtx.selectedIdx ? 'active' : ''}`;
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.src = src;
+      img.alt = `${avatarModalCtx.activeCat}_${idx}`;
+      item.appendChild(img);
+      item.addEventListener('click', () => {
+        if (typeof avatarModalCtx.onSelect === 'function') {
+          avatarModalCtx.onSelect(avatarModalCtx.activeCat, idx, src);
+        }
+        closeAvatarLibraryModal();
+      });
+      grid.appendChild(item);
+    });
+  }
+
+  function openAvatarLibraryModal(cfg) {
+    const modal = document.getElementById('avatarLibraryModal');
+    const titleEl = document.getElementById('avatarLibModalTitle');
+    if (!modal) return;
+    avatarModalCtx.activeCat = cfg.initialCat || 'beauties';
+    avatarModalCtx.selectedIdx = Number(cfg.initialIdx) || 0;
+    avatarModalCtx.onSelect = cfg.onSelect;
+    avatarModalCtx.onUploadFile = cfg.onUploadFile;
+    if (titleEl && cfg.title) titleEl.textContent = cfg.title;
+    renderAvatarLibraryModalContent();
+    modal.classList.remove('hidden');
+  }
+
+  function openAvatarLibraryForStoreUser() {
+    openAvatarLibraryModal({
+      title: '🖼️ 为商店个人名片挑选头像（450+ 离线高清头像库）',
+      initialCat: 'beauties',
+      initialIdx: 0,
+      onSelect: (cat, idx) => {
+        const db = global.LAYA_ASIAN_AVATARS || {};
+        const arr = db[cat] || db.beauties || [];
+        if (!arr.length) return;
+        const dataUrl = arr[((Number(idx) || 0) % arr.length + arr.length) % arr.length];
+        const blob = dataUrlToBlob(dataUrl);
+        if (blob) {
+          saveAndApplyImageSlot('userAvatar', blob, 'user_avatar', '👤 已从头像库更新并保存商店同步头像');
+        } else {
+          const img = new Image();
+          img.onload = () => {
+            mediaRegistry.userAvatar = img;
+            if (state.hiddenElements) {
+              delete state.hiddenElements.user_avatar;
+              renderHiddenElementsManager();
+            }
+            persistState();
+            showToast('👤 已从头像库更新商店同步头像');
+          };
+          img.src = dataUrl;
+        }
+      },
+      onUploadFile: (file) => {
+        saveAndApplyImageSlot('userAvatar', file, 'user_avatar', '👤 已上传并保存个人同步头像');
+      }
+    });
+  }
+
+  function openAvatarLibraryForProfileUser() {
+    const u = state.profileCenter.user;
+    openAvatarLibraryModal({
+      title: '🖼️ 为个人中心挑选头像（450+ 离线高清头像库）',
+      initialCat: u.avatarCategory || 'beauties',
+      initialIdx: u.avatarIndex || 0,
+      onSelect: (cat, idx) => {
+        mediaRegistry.profAvatar = null;
+        removePersistedMedia('profAvatar');
+        u.avatarCategory = cat;
+        u.avatarIndex = idx;
+        refreshProfileAvatarPreview();
+        persistState();
+        showToast('👤 已从头像库更新个人中心头像');
+      },
+      onUploadFile: (file) => {
+        loadBlobAsImage(file, (img) => {
+          mediaRegistry.profAvatar = img;
+          persistMedia('profAvatar', file);
+          refreshProfileAvatarPreview();
+          showToast('👤 已上传并保存自定义头像');
+        });
+      }
+    });
+  }
+
+  function refreshProfileAvatarPreview() {
+    const prev = document.getElementById('profAvatarPreviewImg');
+    if (!prev || !state.profileCenter) return;
+    if (mediaRegistry.profAvatar && mediaRegistry.profAvatar.src) {
+      prev.src = mediaRegistry.profAvatar.src;
+      return;
+    }
+    const db = global.LAYA_ASIAN_AVATARS || {};
+    const u = state.profileCenter.user || {};
+    const arr = db[u.avatarCategory] || db.beauties || [];
+    if (arr.length) {
+      const idx = ((Number(u.avatarIndex) || 0) % arr.length + arr.length) % arr.length;
+      prev.src = arr[idx];
+    }
+  }
+
+  // ===========================================================================
+  // 个人中心面板控制与事件绑定
+  // ===========================================================================
+  function bindProfileControlEvents() {
+    const btnOpenLib = document.getElementById('btnOpenAvatarLibMain');
+    if (btnOpenLib) btnOpenLib.addEventListener('click', openAvatarLibraryForProfileUser);
+
+    const btnRandAv = document.getElementById('btnRandProfAvatar');
+    if (btnRandAv) {
+      btnRandAv.addEventListener('click', () => {
+        const picked = global.LayaProfileCenter.pickRandomAvatarFromLibrary(state.profileCenter.aiGenderPref || 'any');
+        mediaRegistry.profAvatar = null;
+        removePersistedMedia('profAvatar');
+        state.profileCenter.user.avatarCategory = picked.category;
+        state.profileCenter.user.avatarIndex = picked.index;
+        refreshProfileAvatarPreview();
+        persistState();
+        showToast('🎲 已从头像库随机更换头像');
+      });
+    }
+
+    const fileProfAv = document.getElementById('fileProfAvatar');
+    if (fileProfAv) {
+      fileProfAv.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        loadBlobAsImage(file, (img) => {
+          mediaRegistry.profAvatar = img;
+          persistMedia('profAvatar', file);
+          refreshProfileAvatarPreview();
+          showToast('👤 已上传并保存个人中心头像');
+        });
+        e.target.value = '';
+      });
+    }
+
+    const btnResetAv = document.getElementById('btnResetProfAvatar');
+    if (btnResetAv) {
+      btnResetAv.addEventListener('click', () => {
+        mediaRegistry.profAvatar = null;
+        removePersistedMedia('profAvatar');
+        refreshProfileAvatarPreview();
+        showToast('已切换回头像库头像');
+      });
+    }
+
+    const fileProfBg = document.getElementById('fileProfBg');
+    if (fileProfBg) {
+      fileProfBg.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        loadBlobAsImage(file, (img) => {
+          mediaRegistry.profileBg = img;
+          state.profileCenter.header.bgStyle = 'custom';
+          persistMedia('profileBg', file);
+          syncStaticInputsFromState();
+          persistState();
+          showToast('🖼️ 已上传并保存个人主页背景图');
+        });
+        e.target.value = '';
+      });
+    }
+
+    const btnNextVibe = document.getElementById('btnNextProfVibe');
+    if (btnNextVibe) {
+      btnNextVibe.addEventListener('click', () => {
+        mediaRegistry.profileBg = null;
+        removePersistedMedia('profileBg');
+        const vibes = (global.LAYA_ASIAN_AVATARS && global.LAYA_ASIAN_AVATARS.vibes) || [];
+        const cur = Number(state.profileCenter.header.vibeIndex) || 0;
+        state.profileCenter.header.vibeIndex = vibes.length ? (cur + 1) % vibes.length : 0;
+        state.profileCenter.header.bgStyle = 'vibe-photo';
+        syncStaticInputsFromState();
+        persistState();
+        showToast('🌄 已切换内置氛围背景图');
+      });
+    }
+
+    const btnResetBg = document.getElementById('btnResetProfBg');
+    if (btnResetBg) {
+      btnResetBg.addEventListener('click', () => {
+        mediaRegistry.profileBg = null;
+        removePersistedMedia('profileBg');
+        state.profileCenter.header.bgStyle = 'portrait-glow';
+        syncStaticInputsFromState();
+        persistState();
+        showToast('已恢复默认柔光虚化背景');
+      });
+    }
+
+    const btnAiBg = document.getElementById('btnProfAiBg');
+    if (btnAiBg) btnAiBg.addEventListener('click', handleProfileAiBg);
+
+    const btnAiPersona = document.getElementById('btnProfAiPersona');
+    if (btnAiPersona) btnAiPersona.addEventListener('click', handleProfileAiPersona);
+
+    const btnAiFeed = document.getElementById('btnProfAiFeedComments');
+    if (btnAiFeed) btnAiFeed.addEventListener('click', () => handleProfileAiFeedComments());
+
+    const batchInput = document.getElementById('fileProfBatchMedia');
+    if (batchInput) {
+      batchInput.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files || []);
+        if (files.length) handleBatchProfMediaUpload(files);
+        e.target.value = '';
+      });
+    }
+
+    const btnAddPost = document.getElementById('btnAddProfPost');
+    if (btnAddPost) {
+      btnAddPost.addEventListener('click', () => {
+        const pc = state.profileCenter;
+        const p = createBlankProfPost(pc.posts.length + 1);
+        pc.posts.push(p);
+        renderProfilePostsEditor();
+        renderPerTextFontList();
+        persistState();
+        showToast(`＋ 已新增作品卡片 ${pc.posts.length}`);
+      });
+    }
+
+    const btnAddCmt = document.getElementById('btnAddProfComment');
+    if (btnAddCmt) {
+      btnAddCmt.addEventListener('click', () => {
+        const pc = state.profileCenter;
+        const av = global.LayaProfileCenter.pickRandomAvatarFromLibrary('male');
+        pc.commentSection.items.push({
+          id: `c_${Date.now()}`,
+          nickname: 'Laya 好友',
+          avatarCategory: av.category,
+          avatarIndex: av.index,
+          text: '刚看完你的新动态，这氛围感也太棒了吧！',
+          timeLoc: '刚刚 · 上海',
+          likes: String(Math.floor(Math.random() * 90 + 12)),
+          authorReply: ''
+        });
+        renderProfileCommentsEditor();
+        renderPerTextFontList();
+        persistState();
+        showToast('＋ 已新增一条互动评论');
+      });
+    }
+  }
+
+  function createBlankProfPost(numIdx) {
+    const isTrad = state.posterLang === 'zh-TW';
+    const conv = (s) => (isTrad && global.LayaPosterLang ? global.LayaPosterLang.convertString(s, true) : s);
+    const ratios = ['3:4', '4:5', '1:1'];
+    return {
+      id: `p_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      mediaType: 'default',
+      defaultVibeIndex: numIdx % 22,
+      aspectRatio: ratios[numIdx % ratios.length],
+      pinBadge: '',
+      showPlayIcon: false,
+      overlayTitle: '',
+      watchedTag: '',
+      title: conv(`今日份 Laya 动态分享 #${numIdx} ✨`),
+      hotComment: conv('💬 网友热评：这状态直接拉满！'),
+      publishTime: conv('刚刚'),
+      likes: String(Math.floor(Math.random() * 400 + 40)),
+      mediaName: '内置氛围封面'
+    };
+  }
+
+  function renderProfilePanelEditors() {
+    if (!state.profileCenter) return;
+    refreshProfileAvatarPreview();
+    renderProfileStatsEditor();
+    renderProfileTabsEditor();
+    renderProfilePostsEditor();
+    renderProfileCommentsEditor();
+    renderProfileBottomNavEditor();
+  }
+
+  function renderProfileStatsEditor() {
+    const container = document.getElementById('profStatsEditorList');
+    if (!container || !state.profileCenter) return;
+    container.innerHTML = '';
+    const items = (state.profileCenter.stats && state.profileCenter.stats.items) || [];
+    items.forEach((st) => {
+      const row = document.createElement('div');
+      row.className = 'inline-item-row';
+      row.innerHTML = `
+        <input type="text" class="ctrl-input" data-part="num" value="${escapeHtml(st.num)}" placeholder="数值" style="max-width:110px;font-weight:700;" />
+        <input type="text" class="ctrl-input" data-part="label" value="${escapeHtml(st.label)}" placeholder="标签词" />
+      `;
+      row.querySelector('[data-part="num"]').addEventListener('input', (e) => {
+        st.num = e.target.value;
+        persistState();
+      });
+      row.querySelector('[data-part="label"]').addEventListener('input', (e) => {
+        st.label = e.target.value;
+        persistState();
+      });
+      container.appendChild(row);
+    });
+  }
+
+  function renderProfileTabsEditor() {
+    const container = document.getElementById('profTabsEditorList');
+    if (!container || !state.profileCenter) return;
+    container.innerHTML = '';
+    const ct = state.profileCenter.contentTabs;
+    (ct.tabs || []).forEach((lbl, idx) => {
+      const isAct = idx === Number(ct.activeIndex);
+      const hidKey = `prof_tab_${idx}`;
+      const isHid = Boolean(state.hiddenElements && state.hiddenElements[hidKey]);
+      const row = document.createElement('div');
+      row.className = 'inline-item-row';
+      row.innerHTML = `
+        <button type="button" class="pill-radio ${isAct ? 'active' : ''}">${isAct ? '★ 高亮' : '设高亮'}</button>
+        <input type="text" class="ctrl-input" value="${escapeHtml(lbl)}" />
+        <button type="button" class="mini-clear-btn">${isHid ? '显示' : '隐藏'}</button>
+      `;
+      row.querySelector('.pill-radio').addEventListener('click', () => {
+        ct.activeIndex = idx;
+        renderProfileTabsEditor();
+        persistState();
+      });
+      row.querySelector('input').addEventListener('input', (e) => {
+        ct.tabs[idx] = e.target.value;
+        persistState();
+      });
+      row.querySelector('.mini-clear-btn').addEventListener('click', () => {
+        toggleElementVisibility(hidKey, `分区标签：${lbl}`);
+      });
+      container.appendChild(row);
+    });
+  }
+
+  function renderProfilePostsEditor() {
+    const container = document.getElementById('profPostsEditorList');
+    if (!container || !state.profileCenter) return;
+    container.innerHTML = '';
+    const posts = state.profileCenter.posts || [];
+    const hid = state.hiddenElements || {};
+
+    posts.forEach((post, idx) => {
+      const entry = mediaRegistry.profCardMedia[post.id];
+      const isVideo = entry && entry.type === 'video';
+      const isImage = entry && entry.type === 'image';
+      const hasLibCover = Boolean(!entry && post.coverCategory);
+      const isHidden = Boolean(hid[`prof_post_${post.id}`]);
+
+      const box = document.createElement('div');
+      box.className = 'feed-card-editor';
+      box.innerHTML = `
+        <div class="feed-card-editor-head">
+          <span class="card-badge">作品 ${idx + 1}</span>
+          <div class="card-head-actions">
+            <span class="media-type-pill ${isVideo ? 'is-video' : ''}">
+              ${isVideo ? '🎬 视频' : isImage ? '🖼️ 图片' : hasLibCover ? '🖼️ 图库图' : '🌄 氛围图'}
+            </span>
+            <button type="button" class="btn-dark-sm" data-act="moveUp" ${idx === 0 ? 'disabled' : ''} title="上移顺序">↑</button>
+            <button type="button" class="btn-dark-sm" data-act="moveDown" ${idx === posts.length - 1 ? 'disabled' : ''} title="下移顺序">↓</button>
+            <button type="button" class="btn-dark-sm" data-act="aiOne" title="让 AI 根据当前画面重生成标题和评论">🤖 AI写词</button>
+            <button type="button" class="btn-icon-danger" data-act="hide">${isHidden ? '恢复' : '隐藏'}</button>
+            ${posts.length > 1 ? '<button type="button" class="btn-icon-danger" data-act="del">删除</button>' : ''}
+          </div>
+        </div>
+
+        <div class="upload-bar-row">
+          <label class="btn-purple-outline full-upload-label">
+            📁 上传视频或图片
+            <input type="file" accept="video/mp4,video/webm,video/quicktime,image/*" hidden data-act="upload" />
+          </label>
+          <button type="button" class="btn-dark-sm" data-act="pickLibCover" title="从 450+ 离线高清图片库挑选封面">🖼️ 图库</button>
+          <select class="ctrl-select" data-field="aspectRatio" style="width:auto;font-size:11px;padding:4px 8px;">
+            <option value="auto" ${post.aspectRatio === 'auto' ? 'selected' : ''}>原片比例</option>
+            <option value="3:4" ${post.aspectRatio === '3:4' ? 'selected' : ''}>3:4 竖图</option>
+            <option value="4:5" ${post.aspectRatio === '4:5' ? 'selected' : ''}>4:5 竖图</option>
+            <option value="1:1" ${post.aspectRatio === '1:1' ? 'selected' : ''}>1:1 方图</option>
+            <option value="9:16" ${post.aspectRatio === '9:16' ? 'selected' : ''}>9:16 长竖</option>
+            <option value="4:3" ${post.aspectRatio === '4:3' ? 'selected' : ''}>4:3 横图</option>
+          </select>
+          ${entry || hasLibCover ? '<button type="button" class="btn-dark-sm" data-act="clearMedia">默认图</button>' : ''}
+        </div>
+
+        ${
+          isVideo
+            ? `<div class="video-mini-controls">
+                 <button type="button" class="btn-dark-sm" data-act="playPause">${entry.el.paused ? '▶ 播放' : '⏸ 暂停'}</button>
+                 <button type="button" class="btn-dark-sm" data-act="muteToggle">${entry.el.muted ? '🔇 静音' : '🔊 原声'}</button>
+                 <span class="video-file-hint" title="${escapeHtml(post.mediaName)}">${escapeHtml(post.mediaName)}</span>
+               </div>`
+            : ''
+        }
+
+        <div class="field-group">
+          <label class="field-label">作品标题文案（可由 AI 识别画面生成）</label>
+          <textarea class="ctrl-textarea" rows="2" data-field="title">${escapeHtml(post.title || '')}</textarea>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">卡片下方热评摘要</label>
+          <input type="text" class="ctrl-input" data-field="hotComment" value="${escapeHtml(post.hotComment || '')}" />
+        </div>
+
+        <div class="grid-3-col">
+          <div class="field-group">
+            <label class="field-label">左上角标</label>
+            <input type="text" class="ctrl-input" data-field="pinBadge" value="${escapeHtml(post.pinBadge || '')}" placeholder="如：置顶" />
+          </div>
+          <div class="field-group">
+            <label class="field-label">发布时间</label>
+            <input type="text" class="ctrl-input" data-field="publishTime" value="${escapeHtml(post.publishTime || '')}" />
+          </div>
+          <div class="field-group">
+            <label class="field-label">♡ 点赞数</label>
+            <input type="text" class="ctrl-input" data-field="likes" value="${escapeHtml(post.likes || '')}" />
+          </div>
+        </div>
+
+        <div class="grid-2-col">
+          <div class="field-group">
+            <label class="field-label">画面可选花字</label>
+            <input type="text" class="ctrl-input" data-field="overlayTitle" value="${escapeHtml(post.overlayTitle || '')}" placeholder="留空更干净" />
+          </div>
+          <div class="field-group">
+            <label class="field-label">底栏状态标签</label>
+            <input type="text" class="ctrl-input" data-field="watchedTag" value="${escapeHtml(post.watchedTag || '')}" placeholder="如：刚刚看过" />
+          </div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">卡片作者名（关闭「全部作品同步主页昵称」后独立生效）</label>
+          <input type="text" class="ctrl-input" data-field="customAuthor" value="${escapeHtml(post.customAuthor || '')}" placeholder="留空或同步时跟随主页昵称" />
+        </div>
+
+        <label class="chk-pill" style="padding:5px 8px;font-size:11px;">
+          <input type="checkbox" data-check="showPlayIcon" ${post.showPlayIcon ? 'checked' : ''} />
+          右上角显示 ▶ 视频角标（上传视频自动勾选）
+        </label>
+      `;
+
+      box.querySelectorAll('[data-field]').forEach((el) => {
+        const f = el.getAttribute('data-field');
+        const evt = el.tagName === 'SELECT' ? 'change' : 'input';
+        el.addEventListener(evt, () => {
+          post[f] = el.value;
+          persistState();
+        });
+      });
+
+      const playChk = box.querySelector('[data-check="showPlayIcon"]');
+      if (playChk) {
+        playChk.addEventListener('change', () => {
+          post.showPlayIcon = playChk.checked;
+          persistState();
+        });
+      }
+
+      box.querySelector('[data-act="upload"]').addEventListener('change', (e) => {
+        const f = e.target.files && e.target.files[0];
+        if (f) {
+          delete post.coverCategory;
+          delete post.coverIndex;
+          handleProfPostMediaUpload(post, f);
+        }
+        e.target.value = '';
+      });
+
+      box.querySelector('[data-act="pickLibCover"]').addEventListener('click', () => {
+        openAvatarLibraryModal({
+          title: `🖼️ 为作品 ${idx + 1} 挑选图库封面（450+ 人像库）`,
+          initialCat: post.coverCategory || 'beauties',
+          initialIdx: post.coverIndex || 0,
+          onSelect: (cat, libIdx) => {
+            disposeProfPostMedia(post.id);
+            removePersistedMedia(`profCardMedia:${post.id}`);
+            post.coverCategory = cat;
+            post.coverIndex = libIdx;
+            post.mediaType = 'image';
+            post.mediaName = `图库精选_${Number(libIdx) + 1}`;
+            post.showPlayIcon = false;
+            renderProfilePostsEditor();
+            updateExportModeHint();
+            persistState();
+            showToast(`🖼️ 已为作品 ${idx + 1} 更换图库封面`);
+          },
+          onUploadFile: (file) => {
+            delete post.coverCategory;
+            delete post.coverIndex;
+            handleProfPostMediaUpload(post, file);
+          }
+        });
+      });
+
+      box.querySelector('[data-act="moveUp"]').addEventListener('click', () => {
+        if (idx <= 0) return;
+        const tmp = posts[idx - 1];
+        posts[idx - 1] = posts[idx];
+        posts[idx] = tmp;
+        renderProfilePostsEditor();
+        renderPerTextFontList();
+        persistState();
+      });
+
+      box.querySelector('[data-act="moveDown"]').addEventListener('click', () => {
+        if (idx >= posts.length - 1) return;
+        const tmp = posts[idx + 1];
+        posts[idx + 1] = posts[idx];
+        posts[idx] = tmp;
+        renderProfilePostsEditor();
+        renderPerTextFontList();
+        persistState();
+      });
+
+      const clrBtn = box.querySelector('[data-act="clearMedia"]');
+      if (clrBtn) {
+        clrBtn.addEventListener('click', () => {
+          disposeProfPostMedia(post.id);
+          removePersistedMedia(`profCardMedia:${post.id}`);
+          delete post.coverCategory;
+          delete post.coverIndex;
+          post.mediaType = 'default';
+          post.mediaName = '内置氛围封面';
+          post.showPlayIcon = false;
+          renderProfilePostsEditor();
+          updateExportModeHint();
+          persistState();
+        });
+      }
+
+      const ppBtn = box.querySelector('[data-act="playPause"]');
+      if (ppBtn) ppBtn.addEventListener('click', () => toggleCardVideoPlayback(`prof:${post.id}`));
+
+      const mtBtn = box.querySelector('[data-act="muteToggle"]');
+      if (mtBtn && isVideo) {
+        mtBtn.addEventListener('click', () => {
+          entry.el.muted = !entry.el.muted;
+          renderProfilePostsEditor();
+        });
+      }
+
+      box.querySelector('[data-act="aiOne"]').addEventListener('click', () => {
+        handleProfileAiFeedComments([post.id]);
+      });
+
+      box.querySelector('[data-act="hide"]').addEventListener('click', () => {
+        toggleElementVisibility(`prof_post_${post.id}`, `作品卡片 ${idx + 1}`);
+      });
+
+      const delBtn = box.querySelector('[data-act="del"]');
+      if (delBtn) {
+        delBtn.addEventListener('click', () => {
+          disposeProfPostMedia(post.id);
+          removePersistedMedia(`profCardMedia:${post.id}`);
+          posts.splice(idx, 1);
+          renderProfilePostsEditor();
+          renderPerTextFontList();
+          updateExportModeHint();
+          persistState();
+        });
+      }
+
+      container.appendChild(box);
+    });
+  }
+
+  function renderProfileCommentsEditor() {
+    const container = document.getElementById('profCommentsEditorList');
+    if (!container || !state.profileCenter) return;
+    container.innerHTML = '';
+    const items = (state.profileCenter.commentSection && state.profileCenter.commentSection.items) || [];
+    const db = global.LAYA_ASIAN_AVATARS || {};
+
+    items.forEach((cm, idx) => {
+      const customAv = mediaRegistry.profCommentAvatars[cm.id];
+      const arr = db[cm.avatarCategory] || db.guys || db.beauties || [];
+      const libSrc = arr.length ? arr[((Number(cm.avatarIndex) || 0) % arr.length + arr.length) % arr.length] : '';
+      const avSrc = (customAv && customAv.src) || libSrc;
+
+      const box = document.createElement('div');
+      box.className = 'feed-card-editor';
+      box.innerHTML = `
+        <div class="feed-card-editor-head">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <img src="${avSrc}" style="width:28px;height:28px;border-radius:50%;object-fit:cover;border:1px solid #c084fc;" alt="" />
+            <span class="card-badge">评论 ${idx + 1}</span>
+          </div>
+          <div class="card-head-actions">
+            <button type="button" class="btn-dark-sm" data-act="pickAv">🖼️ 选头像</button>
+            <button type="button" class="btn-icon-danger" data-act="del">删除</button>
+          </div>
+        </div>
+        <div class="grid-3-col">
+          <div class="field-group">
+            <label class="field-label">昵称</label>
+            <input type="text" class="ctrl-input" data-field="nickname" value="${escapeHtml(cm.nickname || '')}" />
+          </div>
+          <div class="field-group">
+            <label class="field-label">时间属地</label>
+            <input type="text" class="ctrl-input" data-field="timeLoc" value="${escapeHtml(cm.timeLoc || '')}" />
+          </div>
+          <div class="field-group">
+            <label class="field-label">赞数</label>
+            <input type="text" class="ctrl-input" data-field="likes" value="${escapeHtml(cm.likes || '')}" />
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">评论正文</label>
+          <textarea class="ctrl-textarea" rows="2" data-field="text">${escapeHtml(cm.text || '')}</textarea>
+        </div>
+        <div class="field-group">
+          <label class="field-label">作者回复（可选，留空不显示）</label>
+          <input type="text" class="ctrl-input" data-field="authorReply" value="${escapeHtml(cm.authorReply || '')}" placeholder="输入作者回复..." />
+        </div>
+      `;
+
+      box.querySelectorAll('[data-field]').forEach((el) => {
+        const f = el.getAttribute('data-field');
+        el.addEventListener('input', () => {
+          cm[f] = el.value;
+          persistState();
+        });
+      });
+
+      box.querySelector('[data-act="pickAv"]').addEventListener('click', () => {
+        openAvatarLibraryModal({
+          title: `🖼️ 为评论 ${idx + 1} 挑选头像`,
+          initialCat: cm.avatarCategory || 'guys',
+          initialIdx: cm.avatarIndex || 0,
+          onSelect: (cat, avIdx) => {
+            delete mediaRegistry.profCommentAvatars[cm.id];
+            removePersistedMedia(`profCmtAv:${cm.id}`);
+            cm.avatarCategory = cat;
+            cm.avatarIndex = avIdx;
+            renderProfileCommentsEditor();
+            persistState();
+          },
+          onUploadFile: (file) => {
+            loadBlobAsImage(file, (img) => {
+              mediaRegistry.profCommentAvatars[cm.id] = img;
+              persistMedia(`profCmtAv:${cm.id}`, file);
+              renderProfileCommentsEditor();
+            });
+          }
+        });
+      });
+
+      box.querySelector('[data-act="del"]').addEventListener('click', () => {
+        delete mediaRegistry.profCommentAvatars[cm.id];
+        removePersistedMedia(`profCmtAv:${cm.id}`);
+        items.splice(idx, 1);
+        renderProfileCommentsEditor();
+        renderPerTextFontList();
+        persistState();
+      });
+
+      container.appendChild(box);
+    });
+  }
+
+  function renderProfileBottomNavEditor() {
+    const container = document.getElementById('profBottomNavEditorList');
+    if (!container || !state.profileCenter) return;
+    container.innerHTML = '';
+    const bNav = state.profileCenter.bottomNav || {};
+    (bNav.tabs || []).forEach((tab, idx) => {
+      const isAct = idx === Number(bNav.activeIndex);
+      const row = document.createElement('div');
+      row.className = 'inline-item-row';
+      row.innerHTML = `
+        <button type="button" class="pill-radio ${isAct ? 'active' : ''}">${isAct ? '★ 高亮' : '设高亮'}</button>
+        <input type="text" class="ctrl-input" data-role="label" value="${escapeHtml(tab.label || '')}" placeholder="标签名" />
+        <input type="text" class="ctrl-input" data-role="badge" value="${escapeHtml(tab.badge || '')}" placeholder="角标(如99+)" style="width:76px;flex:0 0 76px;" />
+      `;
+      row.querySelector('.pill-radio').addEventListener('click', () => {
+        bNav.activeIndex = idx;
+        renderProfileBottomNavEditor();
+        persistState();
+      });
+      row.querySelector('[data-role="label"]').addEventListener('input', (e) => {
+        tab.label = e.target.value;
+        persistState();
+      });
+      row.querySelector('[data-role="badge"]').addEventListener('input', (e) => {
+        tab.badge = e.target.value;
+        persistState();
+      });
+      container.appendChild(row);
+    });
+  }
+
+  function mountProfPostMediaBlob(post, blobOrFile, displayName, shouldSaveToDB) {
+    disposeProfPostMedia(post.id);
+    const url = URL.createObjectURL(blobOrFile);
+    const mime = blobOrFile.type || '';
+
+    return new Promise((resolve) => {
+      if (mime.startsWith('video/')) {
+        const video = document.createElement('video');
+        video.src = url;
+        video.playsInline = true;
+        video.loop = true;
+        video.muted = false;
+        video.preload = 'auto';
+
+        const onReady = () => {
+          video.play().catch(() => {
+            video.muted = true;
+            video.play().catch(() => {});
+          });
+          renderProfilePostsEditor();
+          updateExportModeHint();
+          resolve(post.id);
+        };
+        video.addEventListener('loadeddata', onReady, { once: true });
+        video.addEventListener('error', () => resolve(post.id), { once: true });
+        video.addEventListener('play', () => renderProfilePostsEditor());
+        video.addEventListener('pause', () => renderProfilePostsEditor());
+
+        mediaRegistry.profCardMedia[post.id] = { type: 'video', el: video, url };
+        post.mediaType = 'video';
+        post.mediaName = displayName;
+        post.showPlayIcon = true;
+        post.aspectRatio = 'auto';
+        if (shouldSaveToDB) {
+          persistMedia(`profCardMedia:${post.id}`, blobOrFile, { fileName: displayName });
+          persistState();
+          showToast(`🎬 已载入视频「${displayName}」`);
+        }
+      } else {
+        const img = new Image();
+        img.onload = () => {
+          mediaRegistry.profCardMedia[post.id] = { type: 'image', el: img, url };
+          post.mediaType = 'image';
+          post.mediaName = displayName;
+          post.showPlayIcon = false;
+          post.aspectRatio = 'auto';
+          renderProfilePostsEditor();
+          updateExportModeHint();
+          if (shouldSaveToDB) {
+            persistMedia(`profCardMedia:${post.id}`, blobOrFile, { fileName: displayName });
+            persistState();
+            showToast(`🖼️ 已载入图片「${displayName}」`);
+          }
+          resolve(post.id);
+        };
+        img.onerror = () => resolve(post.id);
+        img.src = url;
+      }
+    });
+  }
+
+  function handleProfPostMediaUpload(post, file) {
+    mountProfPostMediaBlob(post, file, file.name || '上传媒体', true).then((pid) => {
+      if (state.profileCenter && state.profileCenter.autoAiOnUpload) {
+        scheduleAutoAiForUploadedPosts([pid]);
+      }
+    });
+  }
+
+  async function handleBatchProfMediaUpload(files) {
+    const pc = state.profileCenter;
+    const valid = files.filter((f) => f.type.startsWith('video/') || f.type.startsWith('image/'));
+    if (!valid.length) return;
+
+    const uploadedIds = [];
+    const promises = [];
+
+    valid.forEach((file, idx) => {
+      // 优先填充还未上传真实媒体的预设卡片，不够则自动新建卡片
+      let targetPost = pc.posts.find((p) => p.mediaType === 'default' && !uploadedIds.includes(p.id));
+      if (!targetPost) {
+        targetPost = createBlankProfPost(pc.posts.length + 1);
+        pc.posts.push(targetPost);
+      }
+      uploadedIds.push(targetPost.id);
+      promises.push(mountProfPostMediaBlob(targetPost, file, file.name || `作品_${idx + 1}`, true));
+    });
+
+    await Promise.all(promises);
+    renderProfilePostsEditor();
+    renderPerTextFontList();
+    persistState();
+
+    if (pc.autoAiOnUpload) {
+      await handleProfileAiFeedComments(uploadedIds);
+    }
+  }
+
+  function scheduleAutoAiForUploadedPosts(postIds) {
+    (postIds || []).forEach((id) => pendingAutoAiPostIds.add(id));
+    clearTimeout(autoAiBatchTimer);
+    autoAiBatchTimer = setTimeout(() => {
+      const ids = Array.from(pendingAutoAiPostIds);
+      pendingAutoAiPostIds.clear();
+      if (ids.length) handleProfileAiFeedComments(ids);
+    }, 350);
+  }
+
+  async function handleProfileAiBg() {
+    const btn1 = document.getElementById('btnProfAiBg');
+    const btn2 = document.getElementById('btnBarAiBg');
+    if (btn1) btn1.disabled = true;
+    if (btn2) btn2.disabled = true;
+    const orig = btn1 ? btn1.textContent : '';
+    if (btn1) btn1.textContent = '⏳ 生成背景中...';
+
+    try {
+      const res = await global.LayaProfileCenter.generateProfileBgWithAI(state, mediaRegistry);
+      if (res && res.blob) {
+        await new Promise((resolve) => {
+          loadBlobAsImage(res.blob, (img) => {
+            mediaRegistry.profileBg = img;
+            state.profileCenter.header.bgStyle = 'custom';
+            persistMedia('profileBg', res.blob, { fileName: 'ai_profile_bg.png' });
+            syncStaticInputsFromState();
+            persistState();
+            resolve();
+          });
+        });
+        showToast(res.source === 'gemini-image' ? '🎨 Gemini AI 已生成全新主页背景图！' : '🎨 AI 已合成并保存氛围主页背景图！');
+      }
+    } catch (err) {
+      showToast(`生成背景失败：${err.message}`, true);
+    } finally {
+      if (btn1) {
+        btn1.disabled = false;
+        btn1.textContent = orig || '🎨 AI 一键生成背景图';
+      }
+      if (btn2) btn2.disabled = false;
+    }
+  }
+
+  async function handleProfileAiPersona() {
+    const btn1 = document.getElementById('btnProfAiPersona');
+    const btn2 = document.getElementById('btnBarAiPersona');
+    if (btn1) btn1.disabled = true;
+    if (btn2) btn2.disabled = true;
+    const orig = btn1 ? btn1.textContent : '';
+    if (btn1) btn1.textContent = '⏳ AI 构思资料中...';
+
+    try {
+      const res = await global.LayaProfileCenter.generateProfilePersonaWithAI(state);
+      const pc = state.profileCenter;
+      mediaRegistry.profAvatar = null;
+      removePersistedMedia('profAvatar');
+      pc.user.avatarCategory = res.avatarCategory;
+      pc.user.avatarIndex = res.avatarIndex;
+      pc.user.nickname = res.nickname;
+      pc.user.userId = res.userId;
+      pc.user.ipText = res.ipText;
+      pc.user.gender = res.gender;
+      pc.user.age = res.age;
+      pc.user.level = res.level;
+      pc.user.voiceTag = res.voiceTag;
+      pc.header.vibeIndex = res.vibeIndex;
+      pc.header.onlineBadgeText = res.onlineBadgeText;
+      if (pc.stats && Array.isArray(pc.stats.items) && pc.stats.items.length >= 3) {
+        pc.stats.items[0].num = res.following;
+        pc.stats.items[1].num = res.fans;
+        pc.stats.items[2].num = res.likes;
+      }
+      pc.bio.text = res.bioText;
+      pc.momentBar.descText = res.momentDesc;
+
+      syncStaticInputsFromState();
+      renderProfilePanelEditors();
+      persistState();
+      showToast(res.usedRemoteAI ? '✨ AI 已生成头像库头像、昵称与整套个人资料！' : '✨ 已智能生成人设昵称、资料并匹配头像库头像！');
+    } catch (err) {
+      showToast(`生成资料失败：${err.message}`, true);
+    } finally {
+      if (btn1) {
+        btn1.disabled = false;
+        btn1.textContent = orig || '✨ AI 生成资料+头像';
+      }
+      if (btn2) btn2.disabled = false;
+    }
+  }
+
+  async function handleProfileAiFeedComments(targetPostIds) {
+    const btn1 = document.getElementById('btnProfAiFeedComments');
+    const btn2 = document.getElementById('btnBarAiFeedComments');
+    if (btn1) btn1.disabled = true;
+    if (btn2) btn2.disabled = true;
+    const orig = btn1 ? btn1.textContent : '';
+    if (btn1) btn1.textContent = '⏳ AI 识别画面写标题与评论中...';
+
+    try {
+      const res = await global.LayaProfileCenter.generateProfileFeedAndCommentsWithAI(
+        state,
+        mediaRegistry,
+        targetPostIds
+      );
+      const pc = state.profileCenter;
+      if (Array.isArray(res.posts)) {
+        res.posts.forEach((gen) => {
+          const target = pc.posts.find((p) => p.id === gen.id);
+          if (target) {
+            target.title = gen.title;
+            target.hotComment = gen.hotComment;
+            target.likes = gen.likes;
+          }
+        });
+      }
+      if (Array.isArray(res.comments) && res.comments.length > 0) {
+        mediaRegistry.profCommentAvatars = {};
+        pc.commentSection.items = res.comments;
+      }
+      renderProfilePanelEditors();
+      renderPerTextFontList();
+      persistState();
+      showToast(
+        res.usedRemoteAI
+          ? '🤖 Gemini Vision 已根据上传视频/图片生成标题与底部评论！'
+          : '🤖 已根据上传作品生成对应标题与互动评论（填入 Gemini Key 可看图精准创作）'
+      );
+    } catch (err) {
+      showToast(`AI 生成标题评论提示：${err.message}`, true);
+    } finally {
+      if (btn1) {
+        btn1.disabled = false;
+        btn1.textContent = orig || '🤖 让 AI 根据当前视频/图片写标题与底部评论';
+      }
+      if (btn2) btn2.disabled = false;
+    }
+  }
+
+  function handleProfileDirectCanvasClick(hit, clientX, clientY) {
+    if (!hit || !state.profileCenter) return false;
+    const key = hit.key;
+    if (!key.startsWith('prof_')) return false;
+
+    const pc = state.profileCenter;
+    activeInlineFontKey = key;
+
+    if (key === 'prof_bg_banner') {
+      openInlineEditorPopover({
+        title: '个人主页背景图片',
+        initialValue: null,
+        clientX,
+        clientY,
+        extraButtons: [
+          {
+            text: '📁 上传背景图片',
+            primary: true,
+            onClick: () => {
+              closeInlineEditor();
+              triggerDirectFileUpload('image/*', (file) => {
+                loadBlobAsImage(file, (img) => {
+                  mediaRegistry.profileBg = img;
+                  pc.header.bgStyle = 'custom';
+                  persistMedia('profileBg', file);
+                  syncStaticInputsFromState();
+                  persistState();
+                  showToast('🖼️ 已更新个人主页背景图');
+                });
+              });
+            }
+          },
+          {
+            text: '🎨 AI 生成背景',
+            onClick: () => {
+              closeInlineEditor();
+              handleProfileAiBg();
+            }
+          },
+          {
+            text: '🎲 换氛围底图',
+            onClick: () => {
+              closeInlineEditor();
+              document.getElementById('btnNextProfVibe').click();
+            }
+          }
+        ]
+      });
+      return true;
+    }
+
+    if (key === 'prof_avatar') {
+      openInlineEditorPopover({
+        title: '个人主页头像',
+        initialValue: null,
+        clientX,
+        clientY,
+        extraButtons: [
+          {
+            text: '🖼️ 从头像库挑选 (450+)',
+            primary: true,
+            onClick: () => {
+              closeInlineEditor();
+              openAvatarLibraryForProfileUser();
+            }
+          },
+          {
+            text: '📁 上传本地头像',
+            onClick: () => {
+              closeInlineEditor();
+              triggerDirectFileUpload('image/*', (file) => {
+                loadBlobAsImage(file, (img) => {
+                  mediaRegistry.profAvatar = img;
+                  persistMedia('profAvatar', file);
+                  refreshProfileAvatarPreview();
+                  showToast('👤 已上传个人头像');
+                });
+              });
+            }
+          },
+          {
+            text: '🎲 随机头像',
+            onClick: () => {
+              closeInlineEditor();
+              document.getElementById('btnRandProfAvatar').click();
+            }
+          }
+        ]
+      });
+      return true;
+    }
+
+    if (key.startsWith('prof_cmt_avatar_')) {
+      const cmtId = key.replace('prof_cmt_avatar_', '');
+      const cm = (pc.commentSection.items || []).find((c) => c.id === cmtId);
+      if (!cm) return true;
+      closeInlineEditor();
+      openAvatarLibraryModal({
+        title: '🖼️ 为该条评论选择头像',
+        initialCat: cm.avatarCategory || 'guys',
+        initialIdx: cm.avatarIndex || 0,
+        onSelect: (cat, avIdx) => {
+          delete mediaRegistry.profCommentAvatars[cm.id];
+          removePersistedMedia(`profCmtAv:${cm.id}`);
+          cm.avatarCategory = cat;
+          cm.avatarIndex = avIdx;
+          renderProfileCommentsEditor();
+          persistState();
+        },
+        onUploadFile: (file) => {
+          loadBlobAsImage(file, (img) => {
+            mediaRegistry.profCommentAvatars[cm.id] = img;
+            persistMedia(`profCmtAv:${cm.id}`, file);
+            renderProfileCommentsEditor();
+          });
+        }
+      });
+      return true;
+    }
+
+    if (key.startsWith('prof_post_play_')) {
+      const postId = key.replace('prof_post_play_', '');
+      const entry = mediaRegistry.profCardMedia[postId];
+      if (entry && entry.type === 'video') {
+        toggleCardVideoPlayback(`prof:${postId}`);
+        return true;
+      }
+      const post = pc.posts.find((p) => p.id === postId);
+      if (post) {
+        closeInlineEditor();
+        triggerDirectFileUpload('video/mp4,video/webm,video/quicktime,image/*', (file) => {
+          handleProfPostMediaUpload(post, file);
+        });
+      }
+      return true;
+    }
+
+    if (key === 'prof_id_row') {
+      const curPref = pc.user.idPrefix !== undefined ? pc.user.idPrefix : 'Laya号：';
+      const curId = pc.user.userId !== undefined ? pc.user.userId : '';
+      openInlineEditorPopover({
+        title: 'Laya 号整行文案（可改前缀或纯 ID）',
+        initialValue: `${curPref}${curId}`,
+        clientX,
+        clientY,
+        onInput: (val) => {
+          const m = String(val).match(/^(.*?)([：:])(.*)$/);
+          if (m) {
+            pc.user.idPrefix = m[1] + m[2];
+            pc.user.userId = m[3];
+          } else {
+            pc.user.idPrefix = '';
+            pc.user.userId = val;
+          }
+          syncStaticInputsFromState();
+        }
+      });
+      return true;
+    }
+
+    const profFieldMap = {
+      prof_sb_time: { path: 'profileCenter.header.time', title: '顶部状态栏时间' },
+      prof_online_badge: { path: 'profileCenter.header.onlineBadgeText', title: '在线状态胶囊' },
+      prof_nickname: { path: 'profileCenter.user.nickname', title: '个人主页昵称' },
+      prof_ip_text: { path: 'profileCenter.user.ipText', title: 'IP 属地文字' },
+      prof_age_badge: { path: 'profileCenter.user.age', title: '年龄文字' },
+      prof_level_badge: { path: 'profileCenter.user.level', title: '等级徽章' },
+      prof_voice_tag: { path: 'profileCenter.user.voiceTag', title: '声音个性标签' },
+      prof_bio_text: { path: 'profileCenter.bio.text', title: '多行个性签名', multiline: true },
+      prof_moment_icon: { path: 'profileCenter.momentBar.iconText', title: '瞬间栏左侧文字' },
+      prof_moment_desc: { path: 'profileCenter.momentBar.descText', title: '瞬间栏右侧说明' },
+      prof_btn_follow: { path: 'profileCenter.actions.followText', title: '关注按钮文字' },
+      prof_btn_msg: { path: 'profileCenter.actions.msgText', title: '发私信按钮文字' },
+      prof_comments_header: { path: 'profileCenter.commentSection.headerTitle', title: '评论区标题' },
+      prof_comments_placeholder: { path: 'profileCenter.commentSection.inputPlaceholder', title: '评论输入框提示词' }
+    };
+
+    if (profFieldMap[key]) {
+      const info = profFieldMap[key];
+      const rawVal = getByPath(state, info.path);
+      openInlineEditorPopover({
+        title: info.title,
+        initialValue: rawVal == null ? '' : String(rawVal),
+        multiline: Boolean(info.multiline),
+        clientX,
+        clientY,
+        onInput: (val) => {
+          setByPath(state, info.path, val);
+          syncStaticInputsFromState();
+        }
+      });
+      return true;
+    }
+
+    if (key.startsWith('prof_stat_num_') || key.startsWith('prof_stat_lbl_')) {
+      const isNum = key.startsWith('prof_stat_num_');
+      const idx = Number(key.replace(isNum ? 'prof_stat_num_' : 'prof_stat_lbl_', ''));
+      const item = pc.stats && pc.stats.items && pc.stats.items[idx];
+      if (!item) return true;
+      openInlineEditorPopover({
+        title: isNum ? `统计数字：${item.label}` : '统计标签词',
+        initialValue: isNum ? item.num : item.label,
+        clientX,
+        clientY,
+        onInput: (val) => {
+          if (isNum) item.num = val;
+          else item.label = val;
+          renderProfileStatsEditor();
+        }
+      });
+      return true;
+    }
+
+    if (key.startsWith('prof_tab_')) {
+      const idx = Number(key.replace('prof_tab_', ''));
+      openInlineEditorPopover({
+        title: `内容分区标签 ${idx + 1}`,
+        initialValue: pc.contentTabs.tabs[idx] || '',
+        clientX,
+        clientY,
+        onInput: (val) => {
+          pc.contentTabs.tabs[idx] = val;
+          renderProfileTabsEditor();
+        },
+        extraButtons: [
+          {
+            text: '★ 设为当前高亮分区',
+            primary: true,
+            onClick: () => {
+              pc.contentTabs.activeIndex = idx;
+              renderProfileTabsEditor();
+              persistState();
+            }
+          }
+        ]
+      });
+      return true;
+    }
+
+    if (key.startsWith('prof_bot_badge_')) {
+      const idx = Number(key.replace('prof_bot_badge_', ''));
+      const tab = pc.bottomNav && pc.bottomNav.tabs && pc.bottomNav.tabs[idx];
+      if (!tab) return true;
+      openInlineEditorPopover({
+        title: `底栏「${tab.label || idx + 1}」红点角标（留空隐藏）`,
+        initialValue: tab.badge || '',
+        clientX,
+        clientY,
+        onInput: (val) => {
+          tab.badge = val;
+          renderProfileBottomNavEditor();
+        }
+      });
+      return true;
+    }
+
+    if (key.startsWith('prof_bot_nav_')) {
+      const idx = Number(key.replace('prof_bot_nav_', ''));
+      const tab = pc.bottomNav && pc.bottomNav.tabs && pc.bottomNav.tabs[idx];
+      if (!tab) return true;
+      openInlineEditorPopover({
+        title: `底部导航：${tab.label}`,
+        initialValue: tab.label,
+        clientX,
+        clientY,
+        onInput: (val) => {
+          tab.label = val;
+          renderProfileBottomNavEditor();
+        },
+        extraButtons: [
+          {
+            text: '★ 设为高亮',
+            primary: true,
+            onClick: () => {
+              pc.bottomNav.activeIndex = idx;
+              renderProfileBottomNavEditor();
+              persistState();
+            }
+          }
+        ]
+      });
+      return true;
+    }
+
+    const postTextMatch = key.match(/^prof_post_(pin|overlay|watched|title|hotcmt|author|time|likes)_(.+)$/);
+    if (postTextMatch) {
+      const kind = postTextMatch[1];
+      const postId = postTextMatch[2];
+      const post = pc.posts.find((p) => p.id === postId);
+      if (!post) return true;
+      if (kind === 'author') {
+        const isSync = !pc.feedSettings || pc.feedSettings.syncAuthorFromProfile !== false;
+        if (isSync) {
+          openInlineEditorPopover({
+            title: '个人主页昵称（全作品同步）',
+            initialValue: pc.user.nickname || '',
+            clientX,
+            clientY,
+            onInput: (val) => {
+              pc.user.nickname = val;
+              syncStaticInputsFromState();
+            }
+          });
+        } else {
+          openInlineEditorPopover({
+            title: '当前作品独立作者名',
+            initialValue: post.customAuthor !== undefined && post.customAuthor !== '' ? post.customAuthor : pc.user.nickname || '',
+            clientX,
+            clientY,
+            onInput: (val) => {
+              post.customAuthor = val;
+              renderProfilePostsEditor();
+            }
+          });
+        }
+        return true;
+      }
+      const fieldMap = {
+        pin: { f: 'pinBadge', t: '作品置顶角标' },
+        overlay: { f: 'overlayTitle', t: '画面花字（可换行）', ml: true },
+        watched: { f: 'watchedTag', t: '底栏状态标签' },
+        title: { f: 'title', t: '作品标题文案', ml: true },
+        hotcmt: { f: 'hotComment', t: '卡片热评摘要', ml: true },
+        time: { f: 'publishTime', t: '发布时间文字' },
+        likes: { f: 'likes', t: '作品点赞数字' }
+      };
+      const cfg = fieldMap[kind];
+      openInlineEditorPopover({
+        title: cfg.t,
+        initialValue: post[cfg.f] || '',
+        multiline: Boolean(cfg.ml),
+        clientX,
+        clientY,
+        onInput: (val) => {
+          post[cfg.f] = val;
+          renderProfilePostsEditor();
+        }
+      });
+      return true;
+    }
+
+    const cmtTextMatch = key.match(/^prof_cmt_(nick|text|reply|meta|likes)_(.+)$/);
+    if (cmtTextMatch) {
+      const kind = cmtTextMatch[1];
+      const cmtId = cmtTextMatch[2];
+      const cm = (pc.commentSection.items || []).find((c) => c.id === cmtId);
+      if (!cm) return true;
+      const map = {
+        nick: { f: 'nickname', t: '评论者昵称' },
+        text: { f: 'text', t: '评论正文内容', ml: true },
+        reply: { f: 'authorReply', t: '作者回复内容', ml: true },
+        meta: { f: 'timeLoc', t: '时间与 IP 属地' },
+        likes: { f: 'likes', t: '评论点赞数' }
+      };
+      const cfg = map[kind];
+      openInlineEditorPopover({
+        title: cfg.t,
+        initialValue: cm[cfg.f] || '',
+        multiline: Boolean(cfg.ml),
+        clientX,
+        clientY,
+        onInput: (val) => {
+          cm[cfg.f] = val;
+          renderProfileCommentsEditor();
+        }
+      });
+      return true;
+    }
+
+    if (key.startsWith('prof_post_')) {
+      const postId = key.replace('prof_post_', '');
+      const post = pc.posts.find((p) => p.id === postId);
+      if (!post) return true;
+      const entry = mediaRegistry.profCardMedia[postId];
+      if (!entry || entry.type !== 'video') {
+        closeInlineEditor();
+        triggerDirectFileUpload('video/mp4,video/webm,video/quicktime,image/*', (file) => {
+          handleProfPostMediaUpload(post, file);
+        });
+      } else {
+        openInlineEditorPopover({
+          title: `${hit.label} 媒体控制`,
+          initialValue: null,
+          clientX,
+          clientY,
+          extraButtons: [
+            {
+              text: '📁 替换视频/图片',
+              primary: true,
+              onClick: () => {
+                closeInlineEditor();
+                triggerDirectFileUpload('video/mp4,video/webm,video/quicktime,image/*', (file) => {
+                  handleProfPostMediaUpload(post, file);
+                });
+              }
+            },
+            {
+              text: entry.el.paused ? '▶ 播放' : '⏸ 暂停',
+              onClick: () => {
+                toggleCardVideoPlayback(`prof:${postId}`);
+                closeInlineEditor();
+              }
+            },
+            {
+              text: '🤖 AI 写标题评论',
+              onClick: () => {
+                closeInlineEditor();
+                handleProfileAiFeedComments([postId]);
+              }
+            }
+          ]
+        });
+      }
+      return true;
+    }
+
+    return true;
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.includes(',')) return null;
+    try {
+      const parts = dataUrl.split(',');
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mime = (mimeMatch && mimeMatch[1]) || 'image/jpeg';
+      const bstr = atob(parts[1]);
+      const u8 = new Uint8Array(bstr.length);
+      for (let i = 0; i < bstr.length; i++) u8[i] = bstr.charCodeAt(i);
+      return new Blob([u8], { type: mime });
+    } catch (_) {
+      return null;
     }
   }
 

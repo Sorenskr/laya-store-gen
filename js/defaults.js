@@ -24,8 +24,248 @@
     ageText: '年满 17 周岁的成年'
   };
 
+  function createDefaultProfileCenter() {
+    return {
+      viewportMode: 'long', // 'long' (1080×自适应长图瀑布流) | 'mobile' (1080×1920 竖屏)
+      scrollY: 0,
+      autoAiOnUpload: true,
+      aiPersonaPrompt: '户外越野与深夜语音房反差感女孩，热爱运动、跑步分享与深夜聊天',
+      aiBgPrompt: '暗夜紫粉柔光虚化人像夜景背景',
+      aiGenderPref: 'female',
+      header: {
+        showStatusBar: true,
+        time: '01:05',
+        battery: 20,
+        charging: false,
+        networkType: '5G',
+        signal1: 4,
+        signal2: 3,
+        wifi: true,
+        dualSim: true,
+        showLayaNotif: true,
+        bgStyle: 'portrait-glow', // 'portrait-glow' | 'aurora-nebula' | 'cyber-neon' | 'vibe-photo' | 'custom'
+        bgDim: 52,
+        vibeIndex: 0,
+        showBackBtn: true,
+        showMoreBtn: true,
+        showOnlineBadge: true,
+        onlineBadgeText: '🟢 语音房在线中'
+      },
+      user: {
+        avatarCategory: 'beauties',
+        avatarIndex: 0,
+        nickname: 'Selina（回关）',
+        idPrefix: 'Laya号：',
+        userId: 'XU38686149',
+        showCopyIcon: true,
+        ipText: 'IP：江苏',
+        gender: 'female',
+        age: '23岁',
+        level: 'Lv.26',
+        voiceTag: '🎧 户外元气甜妹音'
+      },
+      stats: {
+        items: [
+          { id: 'following', num: '1068', label: '关注' },
+          { id: 'fans', num: '4355', label: '粉丝' },
+          { id: 'likes', num: '4.4万', label: '获赞与收藏' }
+        ]
+      },
+      bio: {
+        text: '🏔️ ITRA：619 💪\n2025 Salomon 柴古唐斯越野赛 🥇\n2026 西宏越野赛 56km 🏅\n📮：38686149@qq.com'
+      },
+      momentBar: {
+        enabled: true,
+        iconText: '◎ 瞬间',
+        descText: '1 条瞬间 · 🎙️ 语音签名 12"'
+      },
+      actions: {
+        followText: '关注',
+        isFollowing: false,
+        msgText: '发私信',
+        showFriendBtn: true
+      },
+      contentTabs: {
+        tabs: ['动态', '视频', '瞬间', '收藏'],
+        activeIndex: 0,
+        showSearchIcon: true
+      },
+      feedSettings: {
+        showHotCommentOnCard: true,
+        showAuthorOnCard: true,
+        showTimeOnCard: true,
+        syncAuthorFromProfile: true,
+        cardRadius: 18,
+        colGap: 14,
+        rowGap: 16
+      },
+      posts: [
+        {
+          id: 'p_1',
+          mediaType: 'default',
+          coverCategory: 'beauties',
+          coverIndex: 12,
+          defaultVibeIndex: 2,
+          aspectRatio: '3:4',
+          pinBadge: '置顶',
+          showPlayIcon: true,
+          overlayTitle: '',
+          watchedTag: '',
+          title: 'Salomon 树山越野赛喜获第一☝️',
+          hotComment: '💬 网友热评：姐这配速简直开挂了，膝盖还稳吗？',
+          publishTime: '2025-12-28',
+          likes: '269',
+          customAuthor: '',
+          mediaName: '内置高清封面 1'
+        },
+        {
+          id: 'p_2',
+          mediaType: 'default',
+          coverCategory: 'beauties',
+          coverIndex: 24,
+          defaultVibeIndex: 5,
+          aspectRatio: '4:5',
+          pinBadge: '置顶',
+          showPlayIcon: true,
+          overlayTitle: '',
+          watchedTag: '',
+          title: '柴古唐斯我来啦！夜晚山风超治愈✨',
+          hotComment: '💬 网友热评：5796 号选手冲线太帅了！语音房等复盘',
+          publishTime: '2025-10-30',
+          likes: '824',
+          customAuthor: '',
+          mediaName: '内置高清封面 2'
+        },
+        {
+          id: 'p_3',
+          mediaType: 'default',
+          coverCategory: 'vibes',
+          coverIndex: 9,
+          defaultVibeIndex: 9,
+          aspectRatio: '1:1',
+          pinBadge: '',
+          showPlayIcon: false,
+          overlayTitle: '',
+          watchedTag: '',
+          title: '2026 太湖 100 · 吴越玄冬跑山赛装备清单',
+          hotComment: '💬 网友热评：冲锋衣和越野背包求个链接同款～',
+          publishTime: '昨天 14:25',
+          likes: '71',
+          customAuthor: '',
+          mediaName: '内置氛围封面 3'
+        },
+        {
+          id: 'p_4',
+          mediaType: 'default',
+          coverCategory: 'beauties',
+          coverIndex: 38,
+          defaultVibeIndex: 12,
+          aspectRatio: '3:4',
+          pinBadge: '',
+          showPlayIcon: true,
+          overlayTitle: '',
+          watchedTag: '',
+          title: '西宏越野赛完赛啦，每一步都不算白跑🎉',
+          hotComment: '💬 网友热评：这身材管理绝了，下场一起组队跑呀',
+          publishTime: '昨天 18:59',
+          likes: '31',
+          customAuthor: '',
+          mediaName: '内置高清封面 4'
+        },
+        {
+          id: 'p_5',
+          mediaType: 'default',
+          coverCategory: 'vibes',
+          coverIndex: 15,
+          defaultVibeIndex: 15,
+          aspectRatio: '4:5',
+          pinBadge: '',
+          showPlayIcon: true,
+          overlayTitle: '',
+          watchedTag: '',
+          title: '没有白爬的坡，每一步都算数 ✌️',
+          hotComment: '💬 网友热评：听着你的语音电台夜跑太有动力了',
+          publishTime: '2天前',
+          likes: '84',
+          customAuthor: '',
+          mediaName: '内置氛围封面 5'
+        },
+        {
+          id: 'p_6',
+          mediaType: 'default',
+          coverCategory: 'beauties',
+          coverIndex: 51,
+          defaultVibeIndex: 18,
+          aspectRatio: '3:4',
+          pinBadge: '',
+          showPlayIcon: false,
+          overlayTitle: '',
+          watchedTag: '刚刚看过',
+          title: '西宏越野赛｜秋日的山林与晚霞也太美了吧',
+          hotComment: '💬 网友热评：构图满分！人比秋景还要温柔✨',
+          publishTime: '3天前',
+          likes: '43',
+          customAuthor: '',
+          mediaName: '内置高清封面 6'
+        }
+      ],
+      commentSection: {
+        enabled: true,
+        headerTitle: '精选互动评论 (86)',
+        inputPlaceholder: '喜欢她的动态就留下一句暖心评论吧…',
+        replyPrefix: '作者回复：',
+        items: [
+          {
+            id: 'c_1',
+            nickname: '阿凯 · 台北信义',
+            avatarCategory: 'guys',
+            avatarIndex: 3,
+            text: '昨晚在 Laya 语音房听你复盘越野赛，声音又飒又温柔，直接圈粉！',
+            timeLoc: '刚刚 · 台北',
+            likes: '128',
+            authorReply: '哈哈谢谢阿凯！下次赛前再连麦聊装备～'
+          },
+          {
+            id: 'c_2',
+            nickname: 'Leon_吉隆坡夜跑',
+            avatarCategory: 'guys',
+            avatarIndex: 14,
+            text: '56km 完赛真的太强了，这几张实拍光影质感直接拉满🔥',
+            timeLoc: '18分钟前 · 马来西亚',
+            likes: '64',
+            authorReply: ''
+          },
+          {
+            id: 'c_3',
+            nickname: '林屿森Sean',
+            avatarCategory: 'guys',
+            avatarIndex: 27,
+            text: '刚刚点开主页看瞬间语音条，反差感绝了，求回关一起组队跑步！',
+            timeLoc: '1小时前 · 新加坡',
+            likes: '39',
+            authorReply: ''
+          }
+        ]
+      },
+      bottomNav: {
+        enabled: true,
+        activeIndex: 4,
+        tabs: [
+          { id: 'discover', label: '发现', assetActive: 'tab_1', assetInactive: 'tab_1-1' },
+          { id: 'video', label: '视频', assetActive: 'tab_2', assetInactive: 'tab_2-2' },
+          { id: 'party', label: '派对', assetActive: 'tab_3', assetInactive: 'tab_3-3' },
+          { id: 'message', label: '消息', assetActive: 'tab_4', assetInactive: 'tab_4-4', badge: '99+' },
+          { id: 'profile', label: '我的', assetActive: 'tab_5', assetInactive: 'tab_5-5' }
+        ]
+      }
+    };
+  }
+
   function createDefaultState() {
     return {
+      // 当前工作台模式：'store'（商店截图生成器） | 'profile'（Laya 风格个人中心）
+      activeWorkspace: 'store',
+
       // 画布文案语言状态：'zh-CN'（简体） | 'zh-TW'（繁体）
       posterLang: 'zh-CN',
 
@@ -170,6 +410,9 @@
         ]
       },
 
+      // 个人中心工作台配置（Laya 风格长图瀑布流 / 9:16 竖屏）
+      profileCenter: createDefaultProfileCenter(),
+
       // AI 配置（请在界面「高级 API 设置」中填入自己的密钥，会自动保存在本地浏览器，不会上传公开仓库）
       aiConfig: {
         apiKey: '',
@@ -189,24 +432,62 @@
     };
   }
 
+  const _libraryImgCache = new Map();
+
+  function getLibraryImage(src) {
+    if (!src || typeof src !== 'string') return null;
+    if (_libraryImgCache.has(src)) {
+      return _libraryImgCache.get(src);
+    }
+    const img = new Image();
+    img.src = src;
+    _libraryImgCache.set(src, img);
+    return img;
+  }
+
+  function getAvatarFromLibrary(category, index) {
+    const db = global.LAYA_ASIAN_AVATARS || {};
+    const order = ['beauties', 'guys', 'vibes', 'pets', 'anime', 'cartoons', 'memes'];
+    let list = Array.isArray(db[category]) && db[category].length ? db[category] : null;
+    if (!list) {
+      for (let i = 0; i < order.length; i++) {
+        if (Array.isArray(db[order[i]]) && db[order[i]].length) {
+          list = db[order[i]];
+          break;
+        }
+      }
+    }
+    if (!list || !list.length) return null;
+    const safeIdx = ((Number(index) || 0) % list.length + list.length) % list.length;
+    return getLibraryImage(list[safeIdx]);
+  }
+
   function createRawImageMap(onReady) {
     const rawData = global.LayaRawAssets || {};
+    const appAssets = global.LAYA_APP_ASSETS || {};
+    const brandLogos = global.LAYA_BRAND_LOGOS || {};
     const map = {};
-    const keys = Object.keys(rawData);
-    let remaining = keys.length;
+
+    const entries = [];
+    Object.keys(rawData).forEach((k) => entries.push([k, rawData[k]]));
+    Object.keys(appAssets).forEach((k) => entries.push([`app_${k}`, appAssets[k]]));
+    if (brandLogos['Laya.png']) entries.push(['brand_laya', brandLogos['Laya.png']]);
+    if (brandLogos['Laya2.png']) entries.push(['brand_laya2', brandLogos['Laya2.png']]);
+
+    let remaining = entries.length;
 
     if (remaining === 0 && onReady) {
       onReady(map);
       return map;
     }
 
-    keys.forEach((k) => {
+    entries.forEach(([k, src]) => {
       const img = new Image();
       img.onload = img.onerror = () => {
         remaining -= 1;
         if (remaining <= 0 && onReady) onReady(map);
       };
-      img.src = rawData[k];
+      img.src = src;
       map[k] = img;
     });
 
@@ -358,6 +639,24 @@
     user_distance: { label: '距离与在线状态文字', group: '④ 搜索与个人卡', min: 12, max: 32, getDef: () => 17 }
   };
 
+  const PROFILE_STATIC_TEXT_META = {
+    prof_sb_time: { label: '顶部状态栏时间', group: '① 背景与顶栏', min: 16, max: 40, getDef: () => 24 },
+    prof_online_badge: { label: '顶部在线状态胶囊', group: '① 背景与顶栏', min: 14, max: 34, getDef: () => 19 },
+    prof_nickname: { label: '个人主页昵称', group: '② 头像与身份资料', min: 24, max: 64, getDef: () => 40 },
+    prof_id_row: { label: 'Laya号 / 账号栏', group: '② 头像与身份资料', min: 14, max: 38, getDef: () => 22 },
+    prof_ip_text: { label: 'IP 属地文字', group: '② 头像与身份资料', min: 14, max: 36, getDef: () => 20 },
+    prof_age_badge: { label: '年龄性别徽章', group: '② 头像与身份资料', min: 13, max: 34, getDef: () => 18 },
+    prof_level_badge: { label: '等级徽章', group: '② 头像与身份资料', min: 13, max: 34, getDef: () => 18 },
+    prof_voice_tag: { label: '声音个性标签', group: '② 头像与身份资料', min: 13, max: 34, getDef: () => 18 },
+    prof_bio_text: { label: '多行个性签名简介', group: '③ 数据与个性简介', min: 16, max: 42, getDef: () => 25 },
+    prof_moment_icon: { label: '瞬间栏左侧文字', group: '③ 数据与个性简介', min: 14, max: 36, getDef: () => 22 },
+    prof_moment_desc: { label: '瞬间栏右侧说明', group: '③ 数据与个性简介', min: 14, max: 34, getDef: () => 21 },
+    prof_btn_follow: { label: '主按钮（关注）', group: '③ 数据与个性简介', min: 16, max: 42, getDef: () => 26 },
+    prof_btn_msg: { label: '次按钮（发私信）', group: '③ 数据与个性简介', min: 16, max: 42, getDef: () => 26 },
+    prof_comments_header: { label: '底部评论区标题', group: '⑤ 评论与底部导航', min: 16, max: 42, getDef: () => 26 },
+    prof_comments_placeholder: { label: '评论输入框提示词', group: '⑤ 评论与底部导航', min: 14, max: 34, getDef: () => 21 }
+  };
+
   function getTextElementMeta(state, key) {
     if (!key) return null;
     if (STATIC_TEXT_META[key]) {
@@ -369,6 +668,128 @@
         min: m.min,
         max: m.max,
         defaultSize: m.getDef(state || {})
+      };
+    }
+    if (PROFILE_STATIC_TEXT_META[key]) {
+      const m = PROFILE_STATIC_TEXT_META[key];
+      return {
+        key,
+        label: m.label,
+        group: m.group,
+        min: m.min,
+        max: m.max,
+        defaultSize: m.getDef(state || {})
+      };
+    }
+    if (key.startsWith('prof_stat_num_')) {
+      const idx = Number(key.slice('prof_stat_num_'.length));
+      const item = state && state.profileCenter && state.profileCenter.stats && state.profileCenter.stats.items && state.profileCenter.stats.items[idx];
+      return {
+        key,
+        label: `统计数字「${(item && item.label) || idx + 1}」`,
+        group: '③ 数据与个性简介',
+        min: 18,
+        max: 52,
+        defaultSize: 32
+      };
+    }
+    if (key.startsWith('prof_stat_lbl_')) {
+      const idx = Number(key.slice('prof_stat_lbl_'.length));
+      const item = state && state.profileCenter && state.profileCenter.stats && state.profileCenter.stats.items && state.profileCenter.stats.items[idx];
+      return {
+        key,
+        label: `统计标签「${(item && item.label) || idx + 1}」`,
+        group: '③ 数据与个性简介',
+        min: 13,
+        max: 34,
+        defaultSize: 20
+      };
+    }
+    if (key.startsWith('prof_tab_')) {
+      const idx = Number(key.slice('prof_tab_'.length));
+      const tabs = (state && state.profileCenter && state.profileCenter.contentTabs && state.profileCenter.contentTabs.tabs) || [];
+      return {
+        key,
+        label: `分区标签「${tabs[idx] || idx + 1}」`,
+        group: '④ 内容分区与卡片',
+        min: 16,
+        max: 44,
+        defaultSize: 26
+      };
+    }
+    if (key.startsWith('prof_bot_nav_')) {
+      const idx = Number(key.slice('prof_bot_nav_'.length));
+      const tabs = (state && state.profileCenter && state.profileCenter.bottomNav && state.profileCenter.bottomNav.tabs) || [];
+      return {
+        key,
+        label: `底部导航「${(tabs[idx] && tabs[idx].label) || idx + 1}」`,
+        group: '⑤ 评论与底部导航',
+        min: 12,
+        max: 34,
+        defaultSize: 19
+      };
+    }
+    if (key.startsWith('prof_bot_badge_')) {
+      const idx = Number(key.slice('prof_bot_badge_'.length));
+      const tabs = (state && state.profileCenter && state.profileCenter.bottomNav && state.profileCenter.bottomNav.tabs) || [];
+      return {
+        key,
+        label: `导航角标「${(tabs[idx] && tabs[idx].label) || idx + 1}」`,
+        group: '⑤ 评论与底部导航',
+        min: 10,
+        max: 24,
+        defaultSize: 12
+      };
+    }
+    const profPostMatch = key.match(/^prof_post_(pin|overlay|watched|title|hotcmt|author|time|likes)_(.+)$/);
+    if (profPostMatch) {
+      const kind = profPostMatch[1];
+      const postId = profPostMatch[2];
+      const posts = (state && state.profileCenter && state.profileCenter.posts) || [];
+      const idx = posts.findIndex((p) => p.id === postId);
+      const tag = idx >= 0 ? `作品 ${idx + 1}` : '作品';
+      const map = {
+        pin: { label: `${tag} 置顶角标`, min: 12, max: 30, def: 17 },
+        overlay: { label: `${tag} 画面花字`, min: 16, max: 56, def: 30 },
+        watched: { label: `${tag} 状态角标`, min: 12, max: 32, def: 18 },
+        title: { label: `${tag} 标题文案`, min: 15, max: 40, def: 24 },
+        hotcmt: { label: `${tag} 热评摘要`, min: 13, max: 32, def: 18 },
+        author: { label: `${tag} 作者昵称`, min: 12, max: 30, def: 18 },
+        time: { label: `${tag} 发布时间`, min: 12, max: 28, def: 17 },
+        likes: { label: `${tag} 点赞数字`, min: 12, max: 30, def: 18 }
+      };
+      const cfg = map[kind];
+      return {
+        key,
+        label: cfg.label,
+        group: '④ 内容分区与卡片',
+        min: cfg.min,
+        max: cfg.max,
+        defaultSize: cfg.def
+      };
+    }
+    const profCmtMatch = key.match(/^prof_cmt_(nick|text|reply|meta|likes)_(.+)$/);
+    if (profCmtMatch) {
+      const kind = profCmtMatch[1];
+      const cmtId = profCmtMatch[2];
+      const items = (state && state.profileCenter && state.profileCenter.commentSection && state.profileCenter.commentSection.items) || [];
+      const idx = items.findIndex((c) => c.id === cmtId);
+      const tag = idx >= 0 ? `评论 ${idx + 1}` : '评论';
+      const map = {
+        nick: { label: `${tag} 评论者昵称`, min: 14, max: 34, def: 21 },
+        text: { label: `${tag} 评论正文`, min: 15, max: 38, def: 23 },
+        reply: { label: `${tag} 作者回复`, min: 14, max: 34, def: 21 },
+        meta: { label: `${tag} 时间属地`, min: 12, max: 28, def: 17 },
+        likes: { label: `${tag} 点赞数`, min: 12, max: 30, def: 18 }
+      };
+      const cfg = map[kind];
+      return {
+        key,
+        label: cfg.label,
+        group: '⑤ 评论与底部导航',
+        min: cfg.min,
+        max: cfg.max,
+        defaultSize: cfg.def
       };
     }
     if (key.startsWith('top_tab_')) {
@@ -474,6 +895,35 @@
 
   function listAllTextItems(state) {
     const items = [];
+    if (state && state.activeWorkspace === 'profile') {
+      Object.keys(PROFILE_STATIC_TEXT_META).forEach((k) => {
+        items.push(getTextElementMeta(state, k));
+      });
+      const pc = state.profileCenter || {};
+      const statsItems = (pc.stats && pc.stats.items) || [];
+      statsItems.forEach((_, idx) => {
+        items.push(getTextElementMeta(state, `prof_stat_num_${idx}`));
+        items.push(getTextElementMeta(state, `prof_stat_lbl_${idx}`));
+      });
+      const cTabs = (pc.contentTabs && pc.contentTabs.tabs) || [];
+      cTabs.forEach((_, idx) => items.push(getTextElementMeta(state, `prof_tab_${idx}`)));
+      const posts = pc.posts || [];
+      posts.forEach((p) => {
+        ['title', 'hotcmt', 'pin', 'overlay', 'watched', 'author', 'time', 'likes'].forEach((kind) => {
+          items.push(getTextElementMeta(state, `prof_post_${kind}_${p.id}`));
+        });
+      });
+      const cmts = (pc.commentSection && pc.commentSection.items) || [];
+      cmts.forEach((c) => {
+        ['nick', 'text', 'reply', 'meta', 'likes'].forEach((kind) => {
+          items.push(getTextElementMeta(state, `prof_cmt_${kind}_${c.id}`));
+        });
+      });
+      const bTabs = (pc.bottomNav && pc.bottomNav.tabs) || [];
+      bTabs.forEach((_, idx) => items.push(getTextElementMeta(state, `prof_bot_nav_${idx}`)));
+      return items.filter(Boolean);
+    }
+
     Object.keys(STATIC_TEXT_META).forEach((k) => {
       items.push(getTextElementMeta(state, k));
     });
@@ -495,7 +945,10 @@
     STAGE_HEIGHT,
     DEFAULT_PLAY_STATE,
     createDefaultState,
+    createDefaultProfileCenter,
     createRawImageMap,
+    getLibraryImage,
+    getAvatarFromLibrary,
     isCardUneditedDefault,
     randomizeUserProfile,
     randomizeStatusBar,

@@ -4,8 +4,18 @@
 (function (global) {
   'use strict';
 
-  const W = global.LayaDefaults.STAGE_WIDTH;
-  const H = global.LayaDefaults.STAGE_HEIGHT;
+  function getStageDims(stageCanvas) {
+    const rawW = (stageCanvas && stageCanvas.width) || global.LayaDefaults.STAGE_WIDTH || 1920;
+    const rawH = (stageCanvas && stageCanvas.height) || global.LayaDefaults.STAGE_HEIGHT || 1080;
+    return {
+      w: Math.max(2, Math.floor(rawW / 2) * 2),
+      h: Math.max(2, Math.floor(rawH / 2) * 2)
+    };
+  }
+
+  function getFilePrefix(state) {
+    return state && state.activeWorkspace === 'profile' ? 'Laya_Profile' : 'Laya_Store';
+  }
 
   // 缓存每个 <video> 的 WebAudio SourceNode，避免重复绑定报错
   const videoAudioNodeMap = new WeakMap();
@@ -51,12 +61,16 @@
   }
 
   /**
-   * 调用 Gemini API（支持 Vertex AI AQ.* Key、AI Studio Key 及可选 Google Apps Script 代理）
+   * 调用 Gemini API（优先复用 LayaProfileCenter 的团队内置 Key / 多模型容错链，并兼容 Vertex AI / Studio / GAS 代理）
    */
   async function generateCardCopyWithGemini(options) {
     const { apiKey, gasProxyUrl, topicPrompt, targetCards, mediaRegistry, isTraditional } = options;
-    const trimmedKey = String(apiKey || '').trim();
-    const trimmedProxy = String(gasProxyUrl || '').trim();
+    const resolved =
+      global.LayaProfileCenter && typeof global.LayaProfileCenter.resolveGeminiConfig === 'function'
+        ? global.LayaProfileCenter.resolveGeminiConfig({ apiKey, gasProxyUrl })
+        : { apiKey: String(apiKey || '').trim(), gasProxyUrl: String(gasProxyUrl || '').trim() };
+    const trimmedKey = resolved.apiKey;
+    const trimmedProxy = resolved.gasProxyUrl;
     const langName = isTraditional ? '繁体中文' : '简体中文';
 
     const count = targetCards.length;
@@ -86,13 +100,30 @@
       }
     });
 
-    const requestBody = {
-      contents: [{ role: 'user', parts }],
-      generationConfig: {
-        temperature: 0.9,
-        maxOutputTokens: 1024,
-        responseMimeType: 'application/json'
-      }
+    if (global.LayaProfileCenter && typeof global.LayaProfileCenter.callGeminiRequest === 'function') {
+      const apiResp = await global.LayaProfileCenter.callGeminiRequest(
+        { apiKey: trimmedKey, gasProxyUrl: trimmedProxy },
+        parts,
+        {
+          generationConfig: {
+            temperature: 0.9,
+            maxOutputTokens: 1024,
+            responseMimeType: 'application/json'
+          }
+        }
+      );
+      return parseGeminiCardsJson(apiResp, count);
+    }
+
+    const normalizedParts = parts.map((p) =>
+      p && p.inlineData
+        ? { inline_data: { mime_type: p.inlineData.mimeType || 'image/jpeg', data: p.inlineData.data } }
+        : p
+    );
+    const baseGenCfg = {
+      temperature: 0.9,
+      maxOutputTokens: 1024,
+      responseMimeType: 'application/json'
     };
 
     // 1) 若配置了 Google Apps Script Web App URL，优先走 GAS 无服务器代理
@@ -102,7 +133,7 @@
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify({
           apiKey: trimmedKey,
-          payload: requestBody
+          payload: { contents: [{ role: 'user', parts: normalizedParts }], generationConfig: baseGenCfg }
         })
       });
       if (!proxyResp.ok) {
@@ -119,28 +150,35 @@
       throw new Error('请先填写 Gemini API Key');
     }
 
-    // 2) 直接请求官方端点（根据 AQ. 前缀智能排序 Vertex AI Express 与 Generative Language 端点）
+    // 2) 直接请求官方端点（3.8-flash -> flash-latest -> 2.5-flash -> 2.0-flash 容错链）
     const encKey = encodeURIComponent(trimmedKey);
-    const vertexEndpoints = [
-      `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash:generateContent?key=${encKey}`,
-      `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.0-flash:generateContent?key=${encKey}`
+    const modelSpecs = [
+      { id: 'gemini-3.8-flash', cfg: Object.assign({ thinkingConfig: { thinkingLevel: 'LOW' } }, baseGenCfg) },
+      { id: 'gemini-flash-latest', cfg: baseGenCfg },
+      { id: 'gemini-2.5-flash', cfg: baseGenCfg },
+      { id: 'gemini-2.0-flash', cfg: baseGenCfg }
     ];
-    const studioEndpoints = [
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encKey}`,
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encKey}`
-    ];
-
-    const endpoints = trimmedKey.startsWith('AQ.')
-      ? vertexEndpoints.concat(studioEndpoints)
-      : studioEndpoints.concat(vertexEndpoints);
+    const attempts = [];
+    modelSpecs.forEach((spec) => {
+      const vertexUrl = `https://aiplatform.googleapis.com/v1/publishers/google/models/${spec.id}:generateContent?key=${encKey}`;
+      const studioUrl = `https://generativelanguage.googleapis.com/v1beta/models/${spec.id}:generateContent?key=${encKey}`;
+      if (trimmedKey.startsWith('AQ.')) {
+        attempts.push({ url: vertexUrl, cfg: spec.cfg }, { url: studioUrl, cfg: spec.cfg });
+      } else {
+        attempts.push({ url: studioUrl, cfg: spec.cfg }, { url: vertexUrl, cfg: spec.cfg });
+      }
+    });
 
     let lastErr = null;
-    for (const url of endpoints) {
+    for (const item of attempts) {
       try {
-        const res = await fetch(url, {
+        const res = await fetch(item.url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: normalizedParts }],
+            generationConfig: item.cfg
+          })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -166,7 +204,11 @@
       throw new Error('模型未返回候选内容');
     }
     const parts = (candidates[0].content && candidates[0].content.parts) || [];
-    const rawText = parts.map((p) => p.text || '').join('').trim();
+    const rawText = parts
+      .filter((p) => typeof p.text === 'string' && !p.thought)
+      .map((p) => p.text)
+      .join('')
+      .trim();
     if (!rawText) {
       throw new Error('模型返回文本为空');
     }
@@ -177,7 +219,18 @@
       .replace(/\s*```$/i, '')
       .trim();
 
-    const obj = JSON.parse(cleaned);
+    const firstObj = cleaned.indexOf('{');
+    const lastObj = cleaned.lastIndexOf('}');
+    const firstArr = cleaned.indexOf('[');
+    const lastArr = cleaned.lastIndexOf(']');
+    let jsonSlice = cleaned;
+    if (firstObj !== -1 && lastObj > firstObj && (firstArr === -1 || firstObj < firstArr)) {
+      jsonSlice = cleaned.slice(firstObj, lastObj + 1);
+    } else if (firstArr !== -1 && lastArr > firstArr) {
+      jsonSlice = cleaned.slice(firstArr, lastArr + 1);
+    }
+
+    const obj = JSON.parse(jsonSlice);
     const arr = Array.isArray(obj) ? obj : obj.cards || [];
     if (!Array.isArray(arr) || arr.length === 0) {
       throw new Error('解析 JSON 卡片列表失败');
@@ -263,20 +316,22 @@
   }
 
   /**
-   * 导出 1080×1920 高清 PNG 截图
+   * 导出当前画布高清 PNG 截图（自适应 1920×1080 横屏或 1080×自适应 个人中心长图/竖屏）
    */
   function exportScreenshotPNG(stageCanvas, renderer, state) {
     return new Promise((resolve, reject) => {
       try {
         renderer.render(state, true);
+        const { w, h } = getStageDims(stageCanvas);
+        const prefix = getFilePrefix(state);
         stageCanvas.toBlob((blob) => {
           if (!blob) {
             reject(new Error('生成 PNG 数据失败'));
             return;
           }
           const stamp = formatTimestamp();
-          triggerDownload(blob, `Laya_Store_${W}x${H}_${stamp}.png`);
-          resolve();
+          triggerDownload(blob, `${prefix}_${w}x${h}_${stamp}.png`);
+          resolve({ w, h });
         }, 'image/png');
       } catch (err) {
         reject(err);
@@ -285,7 +340,7 @@
   }
 
   /**
-   * 导出 1080×1920 高清 MP4 影片（支持原生 H.264 MediaRecorder + WebAudio 混音 + WebCodecs Mp4Muxer 兜底）
+   * 导出当前画布高清 MP4 影片（支持原生 H.264 MediaRecorder + WebAudio 混音 + WebCodecs Mp4Muxer 兜底）
    */
   async function exportVideoMP4(options) {
     const {
@@ -299,13 +354,27 @@
     } = options;
 
     const state = getState();
+    renderer.render(state, false);
+    const { w, h } = getStageDims(stageCanvas);
+    const filePrefix = getFilePrefix(state);
+
     const activeVideos = [];
-    (state.feedModule.cards || []).forEach((c) => {
-      const entry = mediaRegistry.cardMedia[c.id];
-      if (entry && entry.type === 'video' && entry.el) {
-        activeVideos.push(entry.el);
-      }
-    });
+    if (state.activeWorkspace === 'profile') {
+      const posts = (state.profileCenter && state.profileCenter.posts) || [];
+      posts.forEach((p) => {
+        const entry = mediaRegistry.profCardMedia && mediaRegistry.profCardMedia[p.id];
+        if (entry && entry.type === 'video' && entry.el) {
+          activeVideos.push(entry.el);
+        }
+      });
+    } else {
+      (state.feedModule.cards || []).forEach((c) => {
+        const entry = mediaRegistry.cardMedia[c.id];
+        if (entry && entry.type === 'video' && entry.el) {
+          activeVideos.push(entry.el);
+        }
+      });
+    }
 
     // 计算导出时长：取最长视频时长（上限 60 秒）或用户指定秒数（无视频时默认 5 秒动态预览）
     let durationSec = Number(customDurationSec) || 0;
@@ -349,6 +418,9 @@
         durationSec,
         mimeType: supportedMp4Mime,
         ext: 'mp4',
+        w,
+        h,
+        filePrefix,
         onProgress,
         abortSignal
       });
@@ -361,6 +433,9 @@
         renderer,
         getState,
         durationSec,
+        w,
+        h,
+        filePrefix,
         onProgress,
         abortSignal
       });
@@ -380,6 +455,9 @@
       durationSec,
       mimeType: fallbackMime,
       ext: fallbackMime.includes('mp4') ? 'mp4' : 'webm',
+      w,
+      h,
+      filePrefix,
       onProgress,
       abortSignal
     });
@@ -394,6 +472,9 @@
       durationSec,
       mimeType,
       ext,
+      w,
+      h,
+      filePrefix,
       onProgress,
       abortSignal
     } = cfg;
@@ -470,7 +551,7 @@
         canvasStream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunks, { type: mimeType });
         const stamp = formatTimestamp();
-        triggerDownload(blob, `Laya_Store_${W}x${H}_${stamp}.${ext}`);
+        triggerDownload(blob, `${filePrefix}_${w}x${h}_${stamp}.${ext}`);
         if (onProgress) onProgress(100);
         resolve({ ext, durationSec });
       };
@@ -501,7 +582,7 @@
   }
 
   async function recordViaWebCodecsMp4(cfg) {
-    const { stageCanvas, renderer, getState, durationSec, onProgress, abortSignal } = cfg;
+    const { stageCanvas, renderer, getState, durationSec, w, h, filePrefix, onProgress, abortSignal } = cfg;
     const Mp4Muxer = global.Mp4Muxer;
     const fps = 30;
     const totalFrames = Math.max(15, Math.round(durationSec * fps));
@@ -510,8 +591,8 @@
       target: new Mp4Muxer.ArrayBufferTarget(),
       video: {
         codec: 'avc',
-        width: W,
-        height: H
+        width: w,
+        height: h
       },
       fastStart: 'in-memory'
     });
@@ -521,11 +602,12 @@
       error: (e) => console.error('VideoEncoder error:', e)
     });
 
+    const codecStr = w * h > 1920 * 1080 ? 'avc1.640033' : 'avc1.640028';
     encoder.configure({
-      codec: 'avc1.640028',
-      width: W,
-      height: H,
-      bitrate: 10_000_000,
+      codec: codecStr,
+      width: w,
+      height: h,
+      bitrate: 12_000_000,
       framerate: fps
     });
 
@@ -562,7 +644,7 @@
     const buffer = muxer.target.buffer;
     const blob = new Blob([buffer], { type: 'video/mp4' });
     const stamp = formatTimestamp();
-    triggerDownload(blob, `Laya_Store_${W}x${H}_${stamp}.mp4`);
+    triggerDownload(blob, `${filePrefix}_${w}x${h}_${stamp}.mp4`);
     if (onProgress) onProgress(100);
     return { ext: 'mp4', durationSec };
   }

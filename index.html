@@ -87,6 +87,29 @@
         </div>
       </div>
 
+      <!-- 双栏模式切换条（Laya 商店截图生成器 ⇄ Laya 风格个人中心） -->
+      <div id="stageModeBar" class="stage-mode-bar">
+        <div class="mode-tabs-group">
+          <button type="button" class="mode-tab-btn active" data-workspace-mode="store">
+            🏪 Laya 商店截图生成器
+          </button>
+          <button type="button" class="mode-tab-btn" data-workspace-mode="profile">
+            👤 个人中心
+          </button>
+        </div>
+
+        <div id="profileBarTools" class="profile-bar-tools hidden">
+          <select id="selProfileViewportMode" class="ctrl-select" style="width:auto;padding:4px 8px;font-size:12px;" data-bind="profileCenter.viewportMode">
+            <option value="long">📜 长图瀑布流（1080×自适应）</option>
+            <option value="mobile">📱 9:16 手机竖屏（1080×1920）</option>
+          </select>
+          <button type="button" id="btnBarPickAvatar" class="btn-purple-outline btn-xs">🖼️ 头像库选图</button>
+          <button type="button" id="btnBarAiBg" class="btn-purple-outline btn-xs">🎨 AI 生成背景</button>
+          <button type="button" id="btnBarAiPersona" class="btn-purple-outline btn-xs">✨ AI 生成人设</button>
+          <button type="button" id="btnBarAiFeedComments" class="btn-primary btn-xs">🤖 AI 识别内容写标题与评论</button>
+        </div>
+      </div>
+
       <div id="stageViewport" class="stage-viewport">
         <div id="phoneStageShell" class="phone-stage-shell">
           <canvas id="stageCanvas" width="1920" height="1080"></canvas>
@@ -133,16 +156,25 @@
       <input type="file" id="directCanvasFilePicker" hidden />
     </section>
 
-    <!-- 右侧：五大核心分组控制面板（严格保持 100% 简体中文） -->
+    <!-- 右侧：工作台控制面板（严格保持 100% 简体中文） -->
     <aside class="control-panel">
 
-      <!-- 吸顶丝滑快速跳转导航栏 -->
-      <nav class="panel-sticky-nav">
+      <!-- 商店模式吸顶快速跳转导航栏 -->
+      <nav id="storeStickyNav" class="panel-sticky-nav">
         <button type="button" class="quick-jump-btn" data-jump-sec="sec-status">① 步骤</button>
         <button type="button" class="quick-jump-btn" data-jump-sec="sec-play">② 商店</button>
         <button type="button" class="quick-jump-btn" data-jump-sec="sec-nav">③ 导航</button>
         <button type="button" class="quick-jump-btn" data-jump-sec="sec-user">④ 用户</button>
         <button type="button" class="quick-jump-btn" data-jump-sec="sec-feed">⑤ 卡片</button>
+      </nav>
+
+      <!-- 个人中心模式吸顶快速跳转导航栏 -->
+      <nav id="profileStickyNav" class="panel-sticky-nav hidden">
+        <button type="button" class="quick-jump-btn" data-jump-sec="prof-sec-header">① 背景</button>
+        <button type="button" class="quick-jump-btn" data-jump-sec="prof-sec-user">② 头像</button>
+        <button type="button" class="quick-jump-btn" data-jump-sec="prof-sec-stats">③ 简介</button>
+        <button type="button" class="quick-jump-btn" data-jump-sec="prof-sec-feed">④ 作品</button>
+        <button type="button" class="quick-jump-btn" data-jump-sec="prof-sec-comments">⑤ 评论</button>
       </nav>
 
       <!-- 已隐藏/已删除元素一键恢复中心（有隐藏项时自动显示） -->
@@ -154,7 +186,7 @@
         <div id="hiddenChipsList" class="restore-chips-wrap"></div>
       </div>
 
-      <!-- 画布简繁切换 + 透明背景一键切换 + 三处文字全同步总控 + 标志独立快捷上传区 -->
+      <!-- 画布简繁切换 + 透明背景一键切换 + 全局字号调节（双模式通用） -->
       <div class="ai-box" style="padding:11px 13px;">
         <div class="field-label">🌐 画布文字简繁一键切换（编辑栏固定为简体）</div>
         <div class="grid-2-col">
@@ -194,40 +226,43 @@
           <div id="perTextFontList" class="per-text-font-list"></div>
         </details>
 
-        <hr class="sub-divider" />
-        <div class="ai-box-head">
-          <span>🔗 三处搜索文字同步总控（改任意一处，三处全变）</span>
-        </div>
-        <input
-          type="text"
-          id="inpGlobalId"
-          class="ctrl-input"
-          value="6182189"
-          placeholder="输入任意文字或编号，步骤3、搜索框、个人卡同步变更"
-          style="font-weight:700;font-size:15px;color:#fae8ff;"
-        />
+        <div id="storeSharedExtra">
+          <hr class="sub-divider" />
+          <div class="ai-box-head">
+            <span>🔗 三处搜索文字同步总控（改任意一处，三处全变）</span>
+          </div>
+          <input
+            type="text"
+            id="inpGlobalId"
+            class="ctrl-input"
+            value="6182189"
+            placeholder="输入任意文字或编号，步骤3、搜索框、个人卡同步变更"
+            style="font-weight:700;font-size:15px;color:#fae8ff;margin-top:6px;"
+          />
 
-        <div class="field-label" style="margin-top:4px;">🖼️ Logo 独立上传管理（均可拖动与隐藏）</div>
-        <div class="grid-3-col">
-          <label class="btn-purple-outline" style="padding:6px 6px;font-size:11px;cursor:pointer;">
-            上传主 Logo
-            <input type="file" id="filePlayIconTop" accept="image/*" hidden />
-          </label>
-          <label class="btn-dark-sm" style="padding:6px 6px;font-size:11px;cursor:pointer;text-align:center;">
-            商店小 Logo
-            <input type="file" id="fileStoreLogo" accept="image/*" hidden />
-          </label>
-          <label class="btn-dark-sm" style="padding:6px 6px;font-size:11px;cursor:pointer;text-align:center;">
-            浮动贴纸 Logo
-            <input type="file" id="fileFloatingLogo" accept="image/*" hidden />
-          </label>
+          <div class="field-label" style="margin-top:6px;">🖼️ Logo 独立上传管理（均可拖动与隐藏）</div>
+          <div class="grid-3-col">
+            <label class="btn-purple-outline" style="padding:6px 6px;font-size:11px;cursor:pointer;">
+              上传主 Logo
+              <input type="file" id="filePlayIconTop" accept="image/*" hidden />
+            </label>
+            <label class="btn-dark-sm" style="padding:6px 6px;font-size:11px;cursor:pointer;text-align:center;">
+              商店小 Logo
+              <input type="file" id="fileStoreLogo" accept="image/*" hidden />
+            </label>
+            <label class="btn-dark-sm" style="padding:6px 6px;font-size:11px;cursor:pointer;text-align:center;">
+              浮动贴纸 Logo
+              <input type="file" id="fileFloatingLogo" accept="image/*" hidden />
+            </label>
+          </div>
+          <button type="button" id="btnClearAllLogos" class="btn-dark-sm" style="width:100%;font-size:11px;margin-top:6px;">
+            ↺ 恢复全部默认 Logo
+          </button>
         </div>
-        <button type="button" id="btnClearAllLogos" class="btn-dark-sm" style="width:100%;font-size:11px;">
-          ↺ 恢复全部默认 Logo
-        </button>
       </div>
 
-      <!-- ==================== 分组 1：步骤标题与状态栏设置 ==================== -->
+      <!-- ==================== 【商店截图生成器】专属面板分组 ==================== -->
+      <div id="storeControlSections" class="mode-sections-wrap">
       <section id="sec-status" class="acc-item open">
         <button type="button" class="acc-header">
           <span class="acc-title-wrap">
@@ -420,10 +455,11 @@
         <div class="acc-body">
           <div class="upload-bar-row">
             <label class="btn-purple-outline full-upload-label">
-              👤 上传头像（自动同步到下方视频卡片）
+              👤 上传头像（同步卡片）
               <input type="file" id="fileUserAvatar" accept="image/*" hidden />
             </label>
-            <button type="button" id="btnResetUserAvatar" class="btn-dark-sm">默认头像</button>
+            <button type="button" id="btnOpenStoreAvatarLib" class="btn-purple-outline" style="padding:6px 9px;font-size:12px;">🖼️ 头像库</button>
+            <button type="button" id="btnResetUserAvatar" class="btn-dark-sm">默认</button>
           </div>
 
           <button type="button" id="btnRandomUserProfile" class="btn-dark" style="width:100%;">
@@ -585,9 +621,394 @@
           </div>
         </div>
       </section>
+      </div><!-- /#storeControlSections -->
+
+      <!-- ==================== 【个人中心】Laya 风格专属控制面板 ==================== -->
+      <div id="profileControlSections" class="mode-sections-wrap hidden">
+
+        <!-- 分组 ①：背景图片与顶部状态栏 -->
+        <section id="prof-sec-header" class="acc-item open">
+          <button type="button" class="acc-header">
+            <span class="acc-title-wrap">
+              <span class="acc-step-num">1</span>
+              <span>主页背景 ＆ 顶部状态栏（可 AI 生成）</span>
+            </span>
+            <span class="acc-arrow">▼</span>
+          </button>
+          <div class="acc-body">
+            <div class="grid-2-col">
+              <div class="field-group">
+                <label class="field-label">画面比例模式</label>
+                <select class="ctrl-select" data-bind="profileCenter.viewportMode">
+                  <option value="long">📜 长图瀑布流（1080×自适应）</option>
+                  <option value="mobile">📱 9:16 手机竖屏（1080×1920）</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label class="field-label">背景渲染风格</label>
+                <select class="ctrl-select" data-bind="profileCenter.header.bgStyle">
+                  <option value="portrait-glow">✨ 头像柔光暗调融合（同图2）</option>
+                  <option value="vibe-photo">🌄 氛围图库实拍底图</option>
+                  <option value="aurora-nebula">💜 Laya 紫粉极光星云</option>
+                  <option value="cyber-neon">🌆 赛博霓虹渐变</option>
+                  <option value="custom">🖼️ 自定义上传 / AI 生成背景</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="profScrollControlBox" class="field-group hidden">
+              <label class="field-label">
+                <span>竖屏预览上下滚动偏移</span>
+                <span class="val-pill"><span data-val-for="profileCenter.scrollY">0</span>px</span>
+              </label>
+              <input type="range" id="rngProfScrollY" min="0" max="1600" step="10" data-bind="profileCenter.scrollY" />
+            </div>
+
+            <div class="ai-box" style="padding:10px 11px;">
+              <div class="ai-box-head">
+                <span>🎨 AI 生成个人主页背景图片</span>
+              </div>
+              <input
+                type="text"
+                class="ctrl-input"
+                data-bind="profileCenter.aiBgPrompt"
+                placeholder="输入背景氛围词，如：暗夜紫粉霓虹夜景、海边晚霞虚化..."
+              />
+              <div class="upload-bar-row">
+                <button type="button" id="btnProfAiBg" class="btn-primary" style="flex:1;padding:7px 10px;font-size:12px;">
+                  🎨 AI 一键生成背景图
+                </button>
+                <label class="btn-purple-outline" style="padding:6px 10px;font-size:12px;cursor:pointer;">
+                  📁 上传背景
+                  <input type="file" id="fileProfBg" accept="image/*" hidden />
+                </label>
+                <button type="button" id="btnNextProfVibe" class="btn-dark-sm" title="切换图库氛围底图">🎲 换底图</button>
+                <button type="button" id="btnResetProfBg" class="btn-dark-sm" title="清除自定义背景">恢复</button>
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">
+                <span>背景暗角融合浓度</span>
+                <span class="val-pill"><span data-val-for="profileCenter.header.bgDim">52</span>%</span>
+              </label>
+              <input type="range" min="15" max="90" data-bind="profileCenter.header.bgDim" />
+            </div>
+
+            <div class="grid-2-col">
+              <div class="field-group">
+                <label class="field-label">顶部在线状态胶囊文字</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.header.onlineBadgeText" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">状态栏时间</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.header.time" />
+              </div>
+            </div>
+
+            <div class="grid-3-col">
+              <div class="field-group">
+                <label class="field-label">电池电量 <span class="val-pill" data-val-for="profileCenter.header.battery">20</span>%</label>
+                <input type="range" min="1" max="100" data-bind="profileCenter.header.battery" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">网络制式</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.header.networkType" placeholder="5G" />
+              </div>
+              <div class="field-group" style="justify-content:flex-end;">
+                <label class="chk-pill" style="padding:6px 8px;font-size:11px;"><input type="checkbox" data-bind="profileCenter.header.showLayaNotif" /> Laya小标</label>
+              </div>
+            </div>
+
+            <div class="switch-grid">
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.header.showStatusBar" /> 显示状态栏</label>
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.header.showOnlineBadge" /> 显示在线胶囊</label>
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.header.wifi" /> Wi-Fi 图标</label>
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.header.dualSim" /> 双卡信号</label>
+            </div>
+          </div>
+        </section>
+
+        <!-- 分组 ②：头像库挑选 + AI 生成昵称与身份资料 -->
+        <section id="prof-sec-user" class="acc-item open">
+          <button type="button" class="acc-header">
+            <span class="acc-title-wrap">
+              <span class="acc-step-num">2</span>
+              <span>头像库选图 ＆ AI 生成昵称资料</span>
+            </span>
+            <span class="acc-arrow">▼</span>
+          </button>
+          <div class="acc-body">
+            <div class="prof-avatar-bar">
+              <img id="profAvatarPreviewImg" class="prof-avatar-thumb" alt="当前头像" />
+              <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                <div class="upload-bar-row">
+                  <button type="button" id="btnOpenAvatarLibMain" class="btn-purple-outline" style="flex:1;padding:6px 8px;font-size:12px;">
+                    🖼️ 从头像库挑选 (450+)
+                  </button>
+                  <button type="button" id="btnRandProfAvatar" class="btn-dark-sm">🎲 随机头像</button>
+                </div>
+                <div class="upload-bar-row">
+                  <label class="btn-dark-sm" style="flex:1;text-align:center;cursor:pointer;">
+                    📁 上传本地头像
+                    <input type="file" id="fileProfAvatar" accept="image/*" hidden />
+                  </label>
+                  <button type="button" id="btnResetProfAvatar" class="btn-dark-sm">使用头像库</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="ai-box" style="padding:10px 11px;">
+              <div class="ai-box-head">
+                <span>✨ AI 生成头像、昵称与全套资料</span>
+              </div>
+              <div class="grid-2-col">
+                <select class="ctrl-select" data-bind="profileCenter.aiGenderPref">
+                  <option value="female">👩 女生人设（美女头像库）</option>
+                  <option value="male">👨 男生人设（帅哥头像库）</option>
+                  <option value="any">🎲 男女不限</option>
+                  <option value="anime">🌸 二次元头像库</option>
+                  <option value="pet">🐾 萌宠头像库</option>
+                </select>
+                <button type="button" id="btnProfAiPersona" class="btn-primary" style="padding:7px 10px;font-size:12px;">
+                  ✨ AI 生成资料+头像
+                </button>
+              </div>
+              <input
+                type="text"
+                class="ctrl-input"
+                data-bind="profileCenter.aiPersonaPrompt"
+                placeholder="人设提示词：例如 户外越野女生、深夜电台主播、东京留子..."
+              />
+            </div>
+
+            <div class="grid-2-col">
+              <div class="field-group">
+                <label class="field-label">用户昵称（可点画布改）</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.user.nickname" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">IP 属地文字</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.user.ipText" />
+              </div>
+            </div>
+
+            <div class="grid-2-col">
+              <div class="field-group">
+                <label class="field-label">账号前缀词</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.user.idPrefix" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">Laya 号 / 账号 ID</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.user.userId" />
+              </div>
+            </div>
+
+            <div class="grid-3-col">
+              <div class="field-group">
+                <label class="field-label">性别</label>
+                <select class="ctrl-select" data-bind="profileCenter.user.gender">
+                  <option value="female">♀ 女</option>
+                  <option value="male">♂ 男</option>
+                  <option value="none">无符号</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label class="field-label">年龄</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.user.age" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">等级徽章</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.user.level" />
+              </div>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">🎧 声音 / 个性标签徽章</label>
+              <input type="text" class="ctrl-input" data-bind="profileCenter.user.voiceTag" />
+            </div>
+          </div>
+        </section>
+
+        <!-- 分组 ③：粉丝统计、多行签名、瞬间栏与按钮 -->
+        <section id="prof-sec-stats" class="acc-item">
+          <button type="button" class="acc-header">
+            <span class="acc-title-wrap">
+              <span class="acc-step-num">3</span>
+              <span>统计数据 · 个性简介 · 按钮全词编辑</span>
+            </span>
+            <span class="acc-arrow">▼</span>
+          </button>
+          <div class="acc-body">
+            <div class="section-subhead">三组社交数据（数字与下方词均任意改）</div>
+            <div id="profStatsEditorList"></div>
+
+            <div class="field-group">
+              <label class="field-label">多行个性签名（支持换行与 Emoji）</label>
+              <textarea class="ctrl-textarea" rows="4" data-bind="profileCenter.bio.text"></textarea>
+            </div>
+
+            <hr class="sub-divider" />
+            <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.momentBar.enabled" /> 显示「瞬间 / 语音签名」横条</label>
+            <div class="grid-2-col">
+              <div class="field-group">
+                <label class="field-label">瞬间栏左侧词</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.momentBar.iconText" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">瞬间栏右侧说明</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.momentBar.descText" />
+              </div>
+            </div>
+
+            <hr class="sub-divider" />
+            <div class="grid-2-col">
+              <div class="field-group">
+                <label class="field-label">主按钮文字（粉紫渐变）</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.actions.followText" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">次按钮文字（暗紫玻璃）</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.actions.msgText" />
+              </div>
+            </div>
+            <div class="switch-grid">
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.actions.isFollowing" /> 切为已关注态</label>
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.actions.showFriendBtn" /> 显示右侧扩列钮</label>
+            </div>
+          </div>
+        </section>
+
+        <!-- 分组 ④：瀑布流视频/图片上传 + AI 根据内容写标题与热评 -->
+        <section id="prof-sec-feed" class="acc-item open">
+          <button type="button" class="acc-header">
+            <span class="acc-title-wrap">
+              <span class="acc-step-num">4</span>
+              <span>视频与图片作品流（批量上传 ＆ AI 写标题）</span>
+            </span>
+            <span class="acc-arrow">▼</span>
+          </button>
+          <div class="acc-body">
+            <div class="section-subhead">内容分区标签行（如：动态 / 视频 / 瞬间 / 收藏）</div>
+            <div id="profTabsEditorList"></div>
+            <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.contentTabs.showSearchIcon" /> 显示右侧搜索放大镜图标</label>
+
+            <div class="ai-box" style="padding:10px 11px;">
+              <div class="ai-box-head">
+                <span>🤖 AI 看视频/图片生成标题与底部评论</span>
+              </div>
+              <label class="chk-pill" style="font-size:11px;">
+                <input type="checkbox" data-bind="profileCenter.autoAiOnUpload" />
+                上传视频或图片后自动让 AI 识别画面写标题与评论
+              </label>
+              <div class="upload-bar-row">
+                <label class="btn-purple-outline full-upload-label" style="font-size:12px;">
+                  📁 批量上传多个视频/图片
+                  <input type="file" id="fileProfBatchMedia" accept="video/mp4,video/webm,video/quicktime,image/*" multiple hidden />
+                </label>
+                <button type="button" id="btnAddProfPost" class="btn-dark-sm">＋ 新增卡片</button>
+              </div>
+              <button type="button" id="btnProfAiFeedComments" class="btn-primary" style="width:100%;">
+                🤖 让 AI 根据当前视频/图片写标题与底部评论
+              </button>
+              <details style="font-size:11px;color:var(--text-muted);">
+                <summary style="cursor:pointer;user-select:none;">高级 API 设置（填写 Gemini Key / GAS 代理，与商店模式共用）</summary>
+                <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">
+                  <label class="field-label">Gemini API Key</label>
+                  <input type="text" class="ctrl-input" data-bind="aiConfig.apiKey" placeholder="粘贴 Gemini Key（留空则使用内置智能灵感）" />
+                  <label class="field-label">可选 Google Apps Script 代理 URL</label>
+                  <input type="text" class="ctrl-input" data-bind="aiConfig.gasProxyUrl" placeholder="https://script.google.com/macros/s/.../exec" />
+                </div>
+              </details>
+            </div>
+
+            <div class="switch-grid">
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.feedSettings.showHotCommentOnCard" /> 卡片下显示热评</label>
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.feedSettings.showTimeOnCard" /> 卡片下显示时间</label>
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.feedSettings.showAuthorOnCard" /> 卡片下显示作者</label>
+              <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.feedSettings.syncAuthorFromProfile" /> 同步主页头像昵称</label>
+            </div>
+
+            <div class="grid-3-col">
+              <div class="field-group">
+                <label class="field-label">圆角 <span class="val-pill" data-val-for="profileCenter.feedSettings.cardRadius">18</span></label>
+                <input type="range" min="4" max="32" data-bind="profileCenter.feedSettings.cardRadius" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">列间距 <span class="val-pill" data-val-for="profileCenter.feedSettings.colGap">14</span></label>
+                <input type="range" min="6" max="36" data-bind="profileCenter.feedSettings.colGap" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">行间距 <span class="val-pill" data-val-for="profileCenter.feedSettings.rowGap">16</span></label>
+                <input type="range" min="6" max="36" data-bind="profileCenter.feedSettings.rowGap" />
+              </div>
+            </div>
+
+            <div id="profPostsEditorList"></div>
+          </div>
+        </section>
+
+        <!-- 分组 ⑤：底部互动评论区 + Laya 原生底部导航栏 -->
+        <section id="prof-sec-comments" class="acc-item open">
+          <button type="button" class="acc-header">
+            <span class="acc-title-wrap">
+              <span class="acc-step-num">5</span>
+              <span>底部评论区文案 ＆ Laya 底部导航栏</span>
+            </span>
+            <span class="acc-arrow">▼</span>
+          </button>
+          <div class="acc-body">
+            <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.commentSection.enabled" /> 显示下方互动评论区</label>
+            <div class="grid-2-col">
+              <div class="field-group">
+                <label class="field-label">评论区标题</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.commentSection.headerTitle" />
+              </div>
+              <div class="field-group">
+                <label class="field-label">作者回复前缀词</label>
+                <input type="text" class="ctrl-input" data-bind="profileCenter.commentSection.replyPrefix" placeholder="作者回复：" />
+              </div>
+            </div>
+            <div class="field-group">
+              <label class="field-label">评论输入提示词</label>
+              <input type="text" class="ctrl-input" data-bind="profileCenter.commentSection.inputPlaceholder" />
+            </div>
+
+            <div id="profCommentsEditorList"></div>
+
+            <button type="button" id="btnAddProfComment" class="btn-dark" style="width:100%;">
+              ＋ 新增一条互动评论
+            </button>
+
+            <hr class="sub-divider" />
+            <label class="chk-pill"><input type="checkbox" data-bind="profileCenter.bottomNav.enabled" /> 显示 Laya 原生底部五宫格导航栏</label>
+            <div id="profBottomNavEditorList"></div>
+          </div>
+        </section>
+
+      </div><!-- /#profileControlSections -->
 
     </aside>
   </main>
+
+  <!-- 高清离线头像库选择弹窗（450+ 华人/萌宠/氛围/二次元图片，支持选为主头像或评论头像） -->
+  <div id="avatarLibraryModal" class="modal-backdrop hidden">
+    <div class="modal-card avatar-lib-modal">
+      <div class="ai-box-head">
+        <span id="avatarLibModalTitle">🖼️ 选择头像（内置 450+ 纯离线高清图库）</span>
+        <button type="button" id="btnCloseAvatarLib" class="mini-clear-btn">✕ 关闭</button>
+      </div>
+      <div id="avatarLibCategoryBar" class="avatar-lib-cats"></div>
+      <div id="avatarLibGrid" class="avatar-lib-grid"></div>
+      <div class="upload-bar-row">
+        <button type="button" id="btnAvatarLibRandom" class="btn-purple-outline" style="flex:1;">🎲 当前分类随机挑一张</button>
+        <label class="btn-dark" style="cursor:pointer;text-align:center;">
+          📁 改为本地上传
+          <input type="file" id="fileAvatarLibUpload" accept="image/*" hidden />
+        </label>
+      </div>
+    </div>
+  </div>
 
   <!-- 导出 1920×1080 MP4 进度遮罩 -->
   <div id="exportProgressModal" class="modal-backdrop hidden">
@@ -611,8 +1032,10 @@
   <script src="https://cdn.jsdelivr.net/npm/mp4-muxer@5.1.3/build/mp4-muxer.min.js" defer></script>
 
   <script src="./js/assets.js"></script>
+  <script src="./js/avatar-library.js"></script>
   <script src="./js/defaults.js"></script>
   <script src="./js/storage-i18n.js"></script>
+  <script src="./js/profile-center.js"></script>
   <script src="./js/renderer.js"></script>
   <script src="./js/interaction.js"></script>
   <script src="./js/ai-exporter.js"></script>

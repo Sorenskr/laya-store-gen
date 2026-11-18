@@ -203,7 +203,22 @@
     ['关注', '關注'],
     ['用户', '用戶'],
     ['装扮', '裝扮'],
-    ['服装', '服裝']
+    ['服装', '服裝'],
+    ['瞬间', '瞬間'],
+    ['语音', '語音'],
+    ['粉丝', '粉絲'],
+    ['获赞', '獲讚'],
+    ['置顶', '置頂'],
+    ['精选', '精選'],
+    ['评论', '評論'],
+    ['动态', '動態'],
+    ['视频', '視頻'],
+    ['派对', '派對'],
+    ['发现', '發現'],
+    ['在线', '在線'],
+    ['连麦', '連麥'],
+    ['热评', '熱評'],
+    ['江苏', '江蘇']
   ];
 
   const T2S_PHRASES = [
@@ -221,7 +236,22 @@
     ['用戶', '用户'],
     ['裝扮', '装扮'],
     ['服裝', '服装'],
-    ['影片', '视频']
+    ['影片', '视频'],
+    ['視頻', '视频'],
+    ['瞬間', '瞬间'],
+    ['語音', '语音'],
+    ['粉絲', '粉丝'],
+    ['獲讚', '获赞'],
+    ['置頂', '置顶'],
+    ['精選', '精选'],
+    ['評論', '评论'],
+    ['動態', '动态'],
+    ['派對', '派对'],
+    ['發現', '发现'],
+    ['在線', '在线'],
+    ['連麥', '连麦'],
+    ['熱評', '热评'],
+    ['江蘇', '江苏']
   ];
 
   function convertString(str, toTraditional) {
@@ -317,6 +347,71 @@
         card.overlaySubtitle = conv(card.overlaySubtitle);
         card.footerTitle = conv(card.footerTitle);
       });
+    }
+
+    if (state.profileCenter) {
+      const pc = state.profileCenter;
+      if (pc.header) {
+        pc.header.onlineBadgeText = conv(pc.header.onlineBadgeText);
+      }
+      if (pc.user) {
+        pc.user.nickname = conv(pc.user.nickname);
+        pc.user.idPrefix = conv(pc.user.idPrefix);
+        pc.user.ipText = conv(pc.user.ipText);
+        pc.user.age = conv(pc.user.age);
+        pc.user.voiceTag = conv(pc.user.voiceTag);
+      }
+      if (pc.stats && Array.isArray(pc.stats.items)) {
+        pc.stats.items.forEach((st) => {
+          st.num = conv(st.num);
+          st.label = conv(st.label);
+        });
+      }
+      if (pc.bio) {
+        pc.bio.text = conv(pc.bio.text);
+      }
+      if (pc.momentBar) {
+        pc.momentBar.iconText = conv(pc.momentBar.iconText);
+        pc.momentBar.descText = conv(pc.momentBar.descText);
+      }
+      if (pc.actions) {
+        pc.actions.followText = conv(pc.actions.followText);
+        pc.actions.msgText = conv(pc.actions.msgText);
+      }
+      if (pc.contentTabs && Array.isArray(pc.contentTabs.tabs)) {
+        pc.contentTabs.tabs = pc.contentTabs.tabs.map(conv);
+      }
+      if (Array.isArray(pc.posts)) {
+        pc.posts.forEach((p) => {
+          p.pinBadge = conv(p.pinBadge);
+          p.overlayTitle = conv(p.overlayTitle);
+          p.watchedTag = conv(p.watchedTag);
+          p.title = conv(p.title);
+          p.hotComment = conv(p.hotComment);
+          p.publishTime = conv(p.publishTime);
+          if (p.customAuthor) p.customAuthor = conv(p.customAuthor);
+        });
+      }
+      if (pc.commentSection) {
+        pc.commentSection.headerTitle = conv(pc.commentSection.headerTitle);
+        pc.commentSection.inputPlaceholder = conv(pc.commentSection.inputPlaceholder);
+        if (pc.commentSection.replyPrefix) {
+          pc.commentSection.replyPrefix = conv(pc.commentSection.replyPrefix);
+        }
+        if (Array.isArray(pc.commentSection.items)) {
+          pc.commentSection.items.forEach((cm) => {
+            cm.nickname = conv(cm.nickname);
+            cm.text = conv(cm.text);
+            cm.timeLoc = conv(cm.timeLoc);
+            cm.authorReply = conv(cm.authorReply);
+          });
+        }
+      }
+      if (pc.bottomNav && Array.isArray(pc.bottomNav.tabs)) {
+        pc.bottomNav.tabs.forEach((t) => {
+          t.label = conv(t.label);
+        });
+      }
     }
 
     state.posterLang = toTraditional ? 'zh-TW' : 'zh-CN';

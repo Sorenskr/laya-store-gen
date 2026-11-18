@@ -17,6 +17,7 @@
       this.hitBoxes = [];
       this.playButtons = [];
       this.deleteActionBox = null;
+      this._hitScrollOffsetY = 0;
       this._tintCanvas = document.createElement('canvas');
     }
 
@@ -45,23 +46,41 @@
     }
 
     registerHit(key, label, kind, x, y, w, h, parentModule) {
+      const oy = y - (this._hitScrollOffsetY || 0);
       this.hitBoxes.push({
         key,
         label,
         kind,
         parentModule: parentModule || key,
         x,
-        y,
+        y: oy,
         w,
         h,
         cx: x + w / 2,
-        cy: y + h / 2,
+        cy: oy + h / 2,
         right: x + w,
-        bottom: y + h
+        bottom: oy + h
       });
     }
 
+    ensureCanvasDimensions(state) {
+      const isProfile = state && state.activeWorkspace === 'profile' && global.LayaProfileCenter;
+      const targetW = isProfile ? global.LayaProfileCenter.PROF_W : 1920;
+      const targetH = isProfile
+        ? global.LayaProfileCenter.computeProfileCanvasHeight(state, this.media)
+        : 1080;
+      if (this.stageCanvas.width !== targetW || this.stageCanvas.height !== targetH) {
+        this.stageCanvas.width = targetW;
+        this.stageCanvas.height = targetH;
+        this.overlayCanvas.width = targetW;
+        this.overlayCanvas.height = targetH;
+        return true;
+      }
+      return false;
+    }
+
     render(state, forceStaticFrame) {
+      this.ensureCanvasDimensions(state);
       const ctx = this.ctx;
       const W = this.W;
       const H = this.H;
@@ -74,13 +93,18 @@
           ? nowMs / 1000
           : 0;
 
+      // 先徹底清空畫布為全透明像素 RGBA(0,0,0,0)
+      ctx.clearRect(0, 0, W, H);
+
+      if (state && state.activeWorkspace === 'profile' && global.LayaProfileCenter) {
+        global.LayaProfileCenter.renderProfileCenter(this, ctx, state);
+        return;
+      }
+
       const theme = state.layout.canvasTheme || 'dark';
       const isLight = theme === 'light';
       const isOuterTrans = theme === 'transparent' || theme === 'full-transparent';
       const isFullTrans = theme === 'full-transparent';
-
-      // 先徹底清空畫布為全透明像素 RGBA(0,0,0,0)
-      ctx.clearRect(0, 0, W, H);
 
       if (!isOuterTrans) {
         this.drawStageBackdrop(ctx, W, H, isLight, state.layout.bgColor, this.animTime);
@@ -1988,6 +2012,11 @@
           b.key === 'nav_top_trophy' ||
           b.key === 'nav_top_search' ||
           b.key === 'user_avatar' ||
+          b.key === 'prof_bg_banner' ||
+          b.key === 'prof_avatar' ||
+          b.key.startsWith('prof_cmt_avatar_') ||
+          /^prof_post_p_\d+/.test(b.key) ||
+          (/^prof_post_/.test(b.key) && !/^prof_post_(pin|overlay|watched|title|hotcmt|author|time|likes|play)_/.test(b.key)) ||
           b.key.startsWith('feed_card_');
         const isTextEl = Boolean(global.LayaDefaults && global.LayaDefaults.getTextElementMeta(null, b.key));
         const hintSuffix =
