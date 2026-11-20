@@ -14,7 +14,10 @@
   }
 
   function getFilePrefix(state) {
-    return state && state.activeWorkspace === 'profile' ? 'Profile_Poster' : 'Store_Poster';
+    if (!state) return 'Store_Poster';
+    if (state.activeWorkspace === 'profile') return 'Profile_Poster';
+    if (state.activeWorkspace === 'store-portrait') return 'Store_Portrait_9x16';
+    return 'Store_Poster';
   }
 
   // 缓存每个 <video> 的 WebAudio SourceNode，避免重复绑定报错

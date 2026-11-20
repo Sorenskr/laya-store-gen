@@ -70,6 +70,15 @@
     requestStageRender();
   }
 
+  function getActiveOffsetsMap() {
+    if (state.activeWorkspace === 'store-portrait') {
+      if (!state.portraitOffsets) state.portraitOffsets = {};
+      return state.portraitOffsets;
+    }
+    if (!state.offsets) state.offsets = {};
+    return state.offsets;
+  }
+
   function persistMedia(slotKey, fileOrBlob, extraMeta) {
     if (global.LayaPersistence && fileOrBlob) {
       global.LayaPersistence.saveMediaBlob(slotKey, fileOrBlob, extraMeta);
@@ -153,9 +162,10 @@
       getState: () => state,
       onOffsetChange: (key, x, y) => {
         closeInlineEditor();
-        if (!state.offsets[key]) state.offsets[key] = { x: 0, y: 0 };
-        state.offsets[key].x = x;
-        state.offsets[key].y = y;
+        const offMap = getActiveOffsetsMap();
+        if (!offMap[key]) offMap[key] = { x: 0, y: 0 };
+        offMap[key].x = x;
+        offMap[key].y = y;
         updateSelectedElementBar();
         persistState();
       },
@@ -221,7 +231,13 @@
     renderDynamicNavControls();
     renderDynamicFeedCards();
     renderProfilePanelEditors();
-    applyWorkspaceMode(state.activeWorkspace === 'profile' ? 'profile' : 'store', true);
+    const initMode =
+      state.activeWorkspace === 'profile'
+        ? 'profile'
+        : state.activeWorkspace === 'store-portrait'
+        ? 'store-portrait'
+        : 'store';
+    applyWorkspaceMode(initMode, true);
     updateExportModeHint();
     fitStageToViewport();
 
@@ -277,7 +293,7 @@
       const playingVid = hasPlayingVideoOnActiveWorkspace();
       const inWarmup = nowMs < warmupUntil;
       const animActive = Boolean(state.layout && state.layout.enableAnim !== false);
-      const dueIdleAnim = animActive && nowMs - lastIdleAnimTime >= 75;
+      const dueIdleAnim = animActive && nowMs - lastIdleAnimTime >= 42;
 
       if (stageDirty || playingVid || inWarmup || dueIdleAnim) {
         stageDirty = false;
@@ -326,8 +342,19 @@
     if (!wrap || !shell) return;
 
     const isProfile = state.activeWorkspace === 'profile';
-    const stageW = (stageCanvas && stageCanvas.width) || (isProfile ? 1080 : global.LayaDefaults.STAGE_WIDTH);
-    const stageH = (stageCanvas && stageCanvas.height) || (isProfile ? 1920 : global.LayaDefaults.STAGE_HEIGHT);
+    const isPortraitStore = state.activeWorkspace === 'store-portrait';
+    const defW = isProfile
+      ? 1080
+      : isPortraitStore
+      ? (global.LayaDefaults && global.LayaDefaults.PORTRAIT_STAGE_WIDTH) || 1080
+      : global.LayaDefaults.STAGE_WIDTH;
+    const defH = isProfile
+      ? 1920
+      : isPortraitStore
+      ? (global.LayaDefaults && global.LayaDefaults.PORTRAIT_STAGE_HEIGHT) || 1920
+      : global.LayaDefaults.STAGE_HEIGHT;
+    const stageW = (stageCanvas && stageCanvas.width) || defW;
+    const stageH = (stageCanvas && stageCanvas.height) || defH;
 
     let scale;
     if (zoomMode === 'fit') {
@@ -552,8 +579,9 @@
 
     document.getElementById('btnResetSelectedOffset').addEventListener('click', () => {
       const sel = interaction.uiState.selectedBox;
-      if (sel && state.offsets[sel.key]) {
-        delete state.offsets[sel.key];
+      const offMap = getActiveOffsetsMap();
+      if (sel && offMap[sel.key]) {
+        delete offMap[sel.key];
         interaction.uiState.selectedBox = null;
         updateSelectedElementBar();
         persistState();
@@ -578,11 +606,15 @@
     });
 
     document.getElementById('btnResetAllOffsets').addEventListener('click', () => {
-      state.offsets = {};
+      if (state.activeWorkspace === 'store-portrait') {
+        state.portraitOffsets = {};
+      } else {
+        state.offsets = {};
+      }
       interaction.uiState.selectedBox = null;
       updateSelectedElementBar();
       persistState();
-      showToast('已重置所有元素的拖动偏移');
+      showToast('已重置当前画布所有元素的拖动偏移');
     });
 
     // 画布文字简体/繁体一键切换
@@ -875,7 +907,8 @@
       if (customTools) customTools.classList.add('hidden');
       return;
     }
-    const off = state.offsets[sel.key] || { x: 0, y: 0 };
+    const offMap = getActiveOffsetsMap();
+    const off = offMap[sel.key] || { x: 0, y: 0 };
     bar.classList.remove('hidden');
     txt.textContent = `已选中：${sel.label} (${off.x >= 0 ? '+' : ''}${off.x}, ${
       off.y >= 0 ? '+' : ''
@@ -1089,6 +1122,7 @@
       module_2: { sectionId: 'sec-nav', selector: '[data-bind="navModule.showGuideArrows"]' },
       user_avatar: { sectionId: 'sec-user', selector: '#btnRandStoreAvatar' },
       user_search_box: { sectionId: 'sec-user', selector: '[data-bind="userModule.searchQuery"]' },
+      user_search_callout: { sectionId: 'sec-user', selector: '[data-bind="userModule.searchCallout"]' },
       user_cancel_btn: { sectionId: 'sec-user', selector: '[data-bind="userModule.searchQuery"]' },
       user_nickname: { sectionId: 'sec-user', selector: '[data-bind="userModule.nickname"]' },
       user_age_badge: { sectionId: 'sec-user', selector: '[data-bind="userModule.age"]' },
@@ -2549,7 +2583,8 @@
       user_level_badge: { path: 'userModule.level', title: '等级徽章文字' },
       user_bio_tag: { path: 'userModule.bioTag', title: '声音/个性标签' },
       user_region: { path: 'userModule.region', title: '地区/城市位置' },
-      user_distance: { path: 'userModule.distance', title: '距离与在线状态' }
+      user_distance: { path: 'userModule.distance', title: '距离与在线状态' },
+      user_search_callout: { path: 'userModule.searchCallout', title: '搜索框重点提示词（留空仅显示箭头）' }
     };
 
     if (staticFieldMap[key]) {
@@ -2851,14 +2886,15 @@
       return;
     }
 
+    const isPortraitStore = state.activeWorkspace === 'store-portrait';
     const hasAnyVideo = Object.values(mediaRegistry.cardMedia).some((m) => m && m.type === 'video');
     if (hasAnyVideo) {
-      hintBadge.textContent = '🎬 动态视频模式（已上传 MP4）';
+      hintBadge.textContent = isPortraitStore ? '🎬 竖屏视频模式（1080×1920 · 已上传 MP4）' : '🎬 动态视频模式（已上传 MP4）';
       hintBadge.classList.add('video-active');
       mp4Btn.classList.add('pulse-highlight');
       pngBtn.classList.remove('pulse-highlight');
     } else {
-      hintBadge.textContent = '🖼️ 横屏海报模式（1920×1080）';
+      hintBadge.textContent = isPortraitStore ? '📱 竖屏海报模式（1080×1920 · 9:16）' : '🖼️ 横屏海报模式（1920×1080）';
       hintBadge.classList.remove('video-active');
       mp4Btn.classList.remove('pulse-highlight');
     }
@@ -2993,18 +3029,21 @@
   }
 
   // ===========================================================================
-  // 双栏工作台切换（商店截图生成器 ⇄ 个人中心）
+  // 多栏工作台切换（横版商店 ⇄ 竖版商店 9:16 ⇄ 个人中心）
   // ===========================================================================
   function applyWorkspaceMode(mode, skipSave) {
-    const nextMode = mode === 'profile' ? 'profile' : 'store';
+    const nextMode =
+      mode === 'profile' ? 'profile' : mode === 'store-portrait' ? 'store-portrait' : 'store';
     state.activeWorkspace = nextMode;
     const isProfile = nextMode === 'profile';
+    const isPortraitStore = nextMode === 'store-portrait';
 
     document.querySelectorAll('[data-workspace-mode]').forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-workspace-mode') === nextMode);
     });
 
     const profTools = document.getElementById('profileBarTools');
+    const syncHint = document.getElementById('storeSyncHintBadge');
     const storeSticky = document.getElementById('storeStickyNav');
     const profSticky = document.getElementById('profileStickyNav');
     const storeExtra = document.getElementById('storeSharedExtra');
@@ -3014,12 +3053,16 @@
     const dragScopeSel = document.getElementById('selDragScope');
 
     if (profTools) profTools.classList.toggle('hidden', !isProfile);
+    if (syncHint) syncHint.classList.toggle('hidden', isProfile);
     if (storeSticky) storeSticky.classList.toggle('hidden', isProfile);
     if (profSticky) profSticky.classList.toggle('hidden', !isProfile);
     if (storeExtra) storeExtra.classList.toggle('hidden', isProfile);
     if (storeSecs) storeSecs.classList.toggle('hidden', isProfile);
     if (profSecs) profSecs.classList.toggle('hidden', !isProfile);
-    if (shell) shell.classList.toggle('is-profile-mode', isProfile);
+    if (shell) {
+      shell.classList.toggle('is-profile-mode', isProfile);
+      shell.classList.toggle('is-portrait-store', isPortraitStore);
+    }
 
     if (dragScopeSel) {
       dragScopeSel.disabled = false;
@@ -3045,6 +3088,7 @@
     renderCustomElementsList();
     renderPerTextFontList();
     updateExportModeHint();
+    requestStageRender();
     if (!skipSave) persistState();
   }
 
@@ -3181,6 +3225,8 @@
 
     let baseX = 960 + ((sameCount % 5) - 2) * 38;
     let baseY = 520 + (sameCount % 4) * 34;
+    const portraitX = 540 + ((sameCount % 5) - 2) * 30;
+    const portraitY = 920 + (sameCount % 4) * 34;
     if (ws === 'profile') {
       const sy =
         state.profileCenter && state.profileCenter.viewportMode === 'mobile'
@@ -3213,6 +3259,8 @@
         type: type || 'text',
         x: baseX,
         y: baseY,
+        px: ws === 'store' ? portraitX : undefined,
+        py: ws === 'store' ? portraitY : undefined,
         scale: 1,
         rotation: 0,
         color: '#ffffff',
@@ -3246,6 +3294,7 @@
     removePersistedMedia(`customElImg:${elId}`);
     const key = `custom_el_${elId}`;
     if (state.offsets) delete state.offsets[key];
+    if (state.portraitOffsets) delete state.portraitOffsets[key];
     if (state.fontSizes) delete state.fontSizes[key];
     if (state.hiddenElements) delete state.hiddenElements[key];
     if (interaction && interaction.uiState.selectedBox && interaction.uiState.selectedBox.key === key) {
@@ -3266,6 +3315,8 @@
     copy.id = `ce_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     copy.x = (Number(src.x) || 400) + 38;
     copy.y = (Number(src.y) || 300) + 38;
+    if (src.px !== undefined) copy.px = Number(src.px) + 30;
+    if (src.py !== undefined) copy.py = Number(src.py) + 34;
     if (mediaRegistry.customElementImages[src.id]) {
       mediaRegistry.customElementImages[copy.id] = mediaRegistry.customElementImages[src.id];
     }
@@ -3372,7 +3423,13 @@
       btn.addEventListener('click', () => {
         const m = btn.getAttribute('data-workspace-mode');
         applyWorkspaceMode(m);
-        showToast(m === 'profile' ? '👤 已切换至「个人中心」工作台' : '🏪 已切换至「商店截图生成器」');
+        showToast(
+          m === 'profile'
+            ? '👤 已切换至「个人中心」工作台'
+            : m === 'store-portrait'
+            ? '📱 已切换至「竖版商店截图 9:16」（与横版实时同步）'
+            : '🏪 已切换至「横版商店截图 16:9」（与竖版实时同步）'
+        );
       });
     });
 

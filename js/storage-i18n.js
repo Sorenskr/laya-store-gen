@@ -145,9 +145,16 @@
       // offsets、hiddenElements 与 fontSizes 以保存值为准（不混入多余旧项）
       const merged = deepMergeState(defaultState, parsed);
       merged.offsets = (parsed && parsed.offsets) || {};
+      merged.portraitOffsets = (parsed && parsed.portraitOffsets) || {};
       merged.hiddenElements = (parsed && parsed.hiddenElements) || {};
       merged.fontSizes = (parsed && parsed.fontSizes) || {};
       merged.customElements = Array.isArray(parsed && parsed.customElements) ? parsed.customElements : [];
+      merged.customElements.forEach((el) => {
+        if (el && el.id === 'ce_default_install_arrow') {
+          if (el.px === undefined) el.px = 814;
+          if (el.py === undefined) el.py = 249;
+        }
+      });
       if (merged.profileCenter && merged.profileCenter.user && !Array.isArray(merged.profileCenter.user.extraBadges)) {
         merged.profileCenter.user.extraBadges = [];
       }
@@ -240,7 +247,10 @@
     ['中环', '中環'],
     ['板桥', '板橋'],
     ['左营', '左營'],
-    ['路环', '路環']
+    ['路环', '路環'],
+    ['重点', '重點'],
+    ['认准', '認準'],
+    ['此号', '此號']
   ];
 
   const T2S_PHRASES = [
@@ -291,7 +301,10 @@
     ['中環', '中环'],
     ['板橋', '板桥'],
     ['左營', '左营'],
-    ['路環', '路环']
+    ['路環', '路环'],
+    ['重點', '重点'],
+    ['認準', '认准'],
+    ['此號', '此号']
   ];
 
   function convertString(str, toTraditional) {
@@ -371,6 +384,9 @@
 
     if (state.userModule) {
       state.userModule.searchQuery = conv(state.userModule.searchQuery);
+      if (state.userModule.searchCallout) {
+        state.userModule.searchCallout = conv(state.userModule.searchCallout);
+      }
       state.userModule.cancelText = conv(state.userModule.cancelText);
       state.userModule.sectionTitle = conv(state.userModule.sectionTitle);
       state.userModule.nickname = conv(state.userModule.nickname);

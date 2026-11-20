@@ -6,6 +6,8 @@
 
   const STAGE_WIDTH = 1920;
   const STAGE_HEIGHT = 1080;
+  const PORTRAIT_STAGE_WIDTH = 1080;
+  const PORTRAIT_STAGE_HEIGHT = 1920;
 
   const DEFAULT_CARD_1_TITLE = '';
   const DEFAULT_CARD_1_SUB = '';
@@ -356,6 +358,8 @@
       // 模块 3：右栏上方 搜索框 + 丰富个人信息胶囊卡片（含年龄、地区、距离状态）
       userModule: {
         searchQuery: '3157',
+        highlightSearch: true,
+        searchCallout: '认准此号搜索',
         showCursor: true,
         showClearBtn: true,
         cancelText: '取消',
@@ -425,8 +429,9 @@
         includeOverlayText: false
       },
 
-      // 自由拖动偏移量 { [key]: { x, y } }
+      // 自由拖动偏移量：横版 offsets / 竖版 portraitOffsets 各自独立对齐，内容全同步
       offsets: {},
+      portraitOffsets: {},
 
       // 全页面任意元素隐藏/删除状态表 { [key]: labelString }
       hiddenElements: {},
@@ -443,6 +448,8 @@
           text: '',
           x: 716,
           y: 286,
+          px: 814,
+          py: 249,
           scale: 0.74,
           rotation: -35,
           color: '#facc15',
@@ -621,6 +628,7 @@
     play_stats: { label: '评分/大小/分级说明文字', group: '② 商店应用卡', min: 12, max: 34, getDef: () => 19 },
     play_stats_num: { label: '评分大数字（4.8）', group: '② 商店应用卡', min: 16, max: 44, getDef: () => 26 },
     user_search_box: { label: '搜索框输入文字', group: '④ 搜索与个人卡', min: 18, max: 52, getDef: () => 30 },
+    user_search_callout: { label: '搜索重点提示词', group: '④ 搜索与个人卡', min: 13, max: 32, getDef: () => 18 },
     user_cancel_btn: { label: '搜索框右侧「取消」', group: '④ 搜索与个人卡', min: 16, max: 46, getDef: () => 27 },
     user_section_label: { label: '「用户」分组小标题', group: '④ 搜索与个人卡', min: 14, max: 42, getDef: () => 23 },
     user_nickname: { label: '个人卡片用户昵称', group: '④ 搜索与个人卡', min: 18, max: 50, getDef: () => 29 },
@@ -993,6 +1001,7 @@
 
     const pools = {
       searchId: ['3157', '5209', '6812', '9527', '7391', '2048', '8866', '6182189', '10492', '4748'],
+      searchCallout: ['认准此号搜索', '输入此 ID 查找', '重点搜索此号', '搜索房号直达', '点此输入号码'],
       step1: [
         '1、点击链接谷歌商店安装 Laya',
         '1、打开应用商店搜索下载体验',
@@ -1186,6 +1195,8 @@
   global.LayaDefaults = {
     STAGE_WIDTH,
     STAGE_HEIGHT,
+    PORTRAIT_STAGE_WIDTH,
+    PORTRAIT_STAGE_HEIGHT,
     DEFAULT_PLAY_STATE,
     createDefaultState,
     createDefaultProfileCenter,

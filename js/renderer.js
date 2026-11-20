@@ -40,7 +40,11 @@
     }
 
     getOffset(state, key) {
-      const off = state.offsets && state.offsets[key];
+      const offMap =
+        state && state.activeWorkspace === 'store-portrait'
+          ? state.portraitOffsets || state.offsets
+          : state && state.offsets;
+      const off = offMap && offMap[key];
       return off ? { x: off.x || 0, y: off.y || 0 } : { x: 0, y: 0 };
     }
 
@@ -99,11 +103,19 @@
     }
 
     ensureCanvasDimensions(state) {
-      const isProfile = state && state.activeWorkspace === 'profile' && global.LayaProfileCenter;
-      const targetW = isProfile ? global.LayaProfileCenter.PROF_W : 1920;
+      const ws = state && state.activeWorkspace;
+      const isProfile = ws === 'profile' && global.LayaProfileCenter;
+      const isPortraitStore = ws === 'store-portrait';
+      const targetW = isProfile
+        ? global.LayaProfileCenter.PROF_W
+        : isPortraitStore
+        ? (global.LayaDefaults && global.LayaDefaults.PORTRAIT_STAGE_WIDTH) || 1080
+        : (global.LayaDefaults && global.LayaDefaults.STAGE_WIDTH) || 1920;
       const targetH = isProfile
         ? global.LayaProfileCenter.computeProfileCanvasHeight(state, this.media)
-        : 1080;
+        : isPortraitStore
+        ? (global.LayaDefaults && global.LayaDefaults.PORTRAIT_STAGE_HEIGHT) || 1920
+        : (global.LayaDefaults && global.LayaDefaults.STAGE_HEIGHT) || 1080;
       if (this.stageCanvas.width !== targetW || this.stageCanvas.height !== targetH) {
         this.stageCanvas.width = targetW;
         this.stageCanvas.height = targetH;
@@ -146,6 +158,11 @@
 
       if (!isOuterTrans) {
         this.drawStageBackdrop(ctx, W, H, isLight, state.layout.bgColor, this.animTime);
+      }
+
+      if (state && state.activeWorkspace === 'store-portrait') {
+        this.renderStorePortrait(ctx, state, W, H, isLight, isOuterTrans, isFullTrans);
+        return;
       }
 
       const outerX = Number(state.layout.outerPadX) || 48;
@@ -295,6 +312,135 @@
       this.renderCustomElements(ctx, state, 'store', isFullTrans, isLight);
     }
 
+    // ---------------------------------------------------------------------------
+    // 竖版 9:16 商店截图排版引擎（1080×1920：四模块纵向依次排列，与横版内容/元素实时同步）
+    // ---------------------------------------------------------------------------
+    renderStorePortrait(ctx, state, W, H, isLight, isOuterTrans, isFullTrans) {
+      const outerX = 44;
+      const outerY = 18;
+      const colW = W - outerX * 2;
+      const baseStepFont = Number(state.steps.fontSize) || 40;
+      const scaleP = 0.86;
+      const step1Font = Math.round(this.getFontPx(state, 'step_title_1', baseStepFont) * scaleP);
+      const step2Font = Math.round(this.getFontPx(state, 'step_title_2', baseStepFont) * scaleP);
+      const step3Font = Math.round(this.getFontPx(state, 'step_title_3', baseStepFont) * scaleP);
+      const stepRowH = Math.max(46, Math.round(Math.max(step1Font, step2Font, step3Font) * 1.32));
+
+      // 第 1 层：步骤 1 + 模块 1（Google Play 商店卡）
+      if (this.isVisible(state, 'step_title_1')) {
+        this.renderStepHeading(
+          ctx,
+          state,
+          'step_title_1',
+          '步骤 1 标题',
+          state.steps.step1,
+          '01',
+          outerX,
+          outerY,
+          colW,
+          stepRowH,
+          step1Font,
+          isLight,
+          isOuterTrans
+        );
+      }
+      const m1BaseY = outerY + stepRowH + 6;
+      const m1H = state.statusBar && state.statusBar.enabled ? 450 : 426;
+      if (this.isVisible(state, 'module_1')) {
+        const m1Off = this.getOffset(state, 'module_1');
+        const m1X = outerX + m1Off.x;
+        const m1Y = m1BaseY + m1Off.y;
+        this.renderModule1(ctx, state, m1X, m1Y, colW, m1H, isFullTrans);
+        this.registerHit('module_1', '模块 1：Google Play 商店卡', 'module', m1X, m1Y, colW, m1H, 'module_1');
+      }
+
+      // 第 2 层：步骤 2 + 模块 2（标签栏与底部导航）
+      const step2BaseY = m1BaseY + m1H + 12;
+      if (this.isVisible(state, 'step_title_2')) {
+        this.renderStepHeading(
+          ctx,
+          state,
+          'step_title_2',
+          '步骤 2 标题',
+          state.steps.step2,
+          '02',
+          outerX,
+          step2BaseY,
+          colW,
+          stepRowH,
+          step2Font,
+          isLight,
+          isOuterTrans
+        );
+      }
+      const m2BaseY = step2BaseY + stepRowH + 6;
+      const m2H = 248;
+      if (this.isVisible(state, 'module_2')) {
+        const m2Off = this.getOffset(state, 'module_2');
+        const m2X = outerX + m2Off.x;
+        const m2Y = m2BaseY + m2Off.y;
+        this.renderModule2(ctx, state, m2X, m2Y, colW, m2H, isFullTrans);
+        this.registerHit('module_2', '模块 2：标签栏与底部导航', 'module', m2X, m2Y, colW, m2H, 'module_2');
+      }
+
+      // 第 3 层：步骤 3 + 模块 3（搜索与个人信息卡片）
+      const step3BaseY = m2BaseY + m2H + 12;
+      if (this.isVisible(state, 'step_title_3')) {
+        this.renderStepHeading(
+          ctx,
+          state,
+          'step_title_3',
+          '步骤 3 标题',
+          state.steps.step3,
+          '03',
+          outerX,
+          step3BaseY,
+          colW,
+          stepRowH,
+          step3Font,
+          isLight,
+          isOuterTrans
+        );
+      }
+      const m3BaseY = step3BaseY + stepRowH + 6;
+      const m3H = 308;
+      if (this.isVisible(state, 'module_3')) {
+        const m3Off = this.getOffset(state, 'module_3');
+        const m3X = outerX + m3Off.x;
+        const m3Y = m3BaseY + m3Off.y;
+        this.renderModule3(ctx, state, m3X, m3Y, colW, m3H, isFullTrans);
+        this.registerHit('module_3', '模块 3：搜索与个人信息卡片', 'module', m3X, m3Y, colW, m3H, 'module_3');
+      }
+
+      // 第 4 层：模块 4（双列视频卡片流）
+      const m4BaseY = m3BaseY + m3H + 12;
+      const availM4H = Math.max(360, H - outerY - m4BaseY);
+      if (this.isVisible(state, 'module_4')) {
+        const m4Off = this.getOffset(state, 'module_4');
+        const m4X = outerX + m4Off.x;
+        const m4Y = m4BaseY + m4Off.y;
+        const m4H = this.renderModule4(ctx, state, m4X, m4Y, colW, availM4H, isFullTrans);
+        this.registerHit('module_4', '模块 4：双列视频卡片流', 'module', m4X, m4Y, colW, m4H, 'module_4');
+      }
+
+      // 独立浮动品牌贴纸与自定义画布元素（与横版共享同一元素列表）
+      if (this.media.floatingLogo && this.isVisible(state, 'floating_brand_logo')) {
+        const flOff = this.getOffset(state, 'floating_brand_logo');
+        const flW = 112;
+        const flH = 112;
+        const flX = W - outerX - flW - 8 + flOff.x;
+        const flY = outerY + flOff.y;
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.45)';
+        ctx.shadowBlur = 14;
+        this.drawContainImage(ctx, this.media.floatingLogo, flX, flY, flW, flH);
+        ctx.restore();
+        this.registerHit('floating_brand_logo', '独立浮动 Logo', 'element', flX, flY, flW, flH, 'floating_brand_logo');
+      }
+
+      this.renderCustomElements(ctx, state, 'store', isFullTrans, isLight);
+    }
+
     drawStageBackdrop(ctx, W, H, isLight, customDarkBg, t) {
       ctx.save();
       if (isLight) {
@@ -429,13 +575,58 @@
         : /(Laya|laya|娱乐|娛樂|\d{4,})/g;
 
       const emojiParts = bodyText.split('🔍');
+      const isSearchFocusHeading =
+        key === 'step_title_3' && !(state.userModule && state.userModule.highlightSearch === false);
+      const tAnim = this.animTime || 0;
+      const headPulse = tAnim > 0 ? 0.5 + 0.5 * Math.sin(tAnim * 4.2) : 0.78;
+
       emojiParts.forEach((part, pIdx) => {
         if (part) {
           const tokens = part.split(hiRegex);
           tokens.forEach((tk) => {
             if (!tk) return;
+            const isTermHi = Boolean(isSearchFocusHeading && syncedTerm && tk === syncedTerm);
             const isHi =
               (syncedTerm && tk === syncedTerm) || /^(Laya|laya|娱乐|娛樂|\d{4,})$/.test(tk);
+
+            if (isTermHi) {
+              ctx.save();
+              ctx.font = `900 ${fontSize}px ${FONT_SANS}`;
+              const tkW = ctx.measureText(tk).width;
+              const padH = Math.max(10, Math.round(fontSize * 0.28));
+              const pillW = tkW + padH * 2;
+              const pillH = Math.round(fontSize * 1.16);
+              const pillY = centerY - pillH / 2;
+
+              if (!isOuterTrans) {
+                ctx.shadowColor = 'rgba(250, 204, 21, 0.85)';
+                ctx.shadowBlur = 12 + headPulse * 11;
+              }
+              const capGrad = ctx.createLinearGradient(curX, pillY, curX + pillW, pillY + pillH);
+              capGrad.addColorStop(0, 'rgba(250, 204, 21, 0.26)');
+              capGrad.addColorStop(1, 'rgba(244, 63, 94, 0.28)');
+              ctx.fillStyle = capGrad;
+              this.roundRect(ctx, curX, pillY, pillW, pillH, 10);
+              ctx.fill();
+
+              ctx.strokeStyle =
+                tAnim > 0 ? `rgba(253, 224, 71, ${(0.65 + headPulse * 0.35).toFixed(3)})` : '#fde047';
+              ctx.lineWidth = 2.2;
+              ctx.stroke();
+
+              if (isOuterTrans) {
+                ctx.strokeStyle = 'rgba(8, 6, 17, 0.88)';
+                ctx.lineWidth = 5;
+                ctx.lineJoin = 'round';
+                ctx.strokeText(tk, curX + padH, centerY + 1);
+              }
+              ctx.fillStyle = isLight ? '#b45309' : '#fef08a';
+              ctx.fillText(tk, curX + padH, centerY + 1);
+              curX += pillW + 4;
+              ctx.restore();
+              return;
+            }
+
             ctx.save();
             if (isOuterTrans) {
               // 透明背景下加柔和深色描邊與投影，確保貼在任何底圖上都清晰可讀
@@ -638,6 +829,7 @@
       }
 
       // 右侧「安装」按钮与「包含内购商品」小字
+      const appScale = Math.min(1, vScale);
       const instFs = this.getFontPx(state, 'play_install', 26);
       ctx.font = `600 ${instFs}px ${FONT_SANS}`;
       const instLabel = pe.installText || '安装';
@@ -647,7 +839,7 @@
       if (this.isVisible(state, 'play_install')) {
         const instOff = this.getOffset(state, 'play_install');
         const btnX = btnBaseX + instOff.x;
-        const btnY = appRowY + 14 + instOff.y;
+        const btnY = appRowY + Math.round(14 * appScale) + instOff.y;
 
         ctx.save();
         const btnBg = ctx.createLinearGradient(btnX, btnY, btnX + btnW, btnY + btnH);
@@ -686,7 +878,7 @@
       if (this.isVisible(state, 'play_title')) {
         const titleOff = this.getOffset(state, 'play_title');
         const tX = textX + titleOff.x;
-        const tY = appRowY + 34 + titleOff.y;
+        const tY = appRowY + Math.round(34 * appScale) + titleOff.y;
         const titleFs = this.getFontPx(state, 'play_title', 28);
         ctx.font = `700 ${titleFs}px ${FONT_SANS}`;
         ctx.textAlign = 'left';
@@ -699,7 +891,7 @@
       if (this.isVisible(state, 'play_meta')) {
         const metaOff = this.getOffset(state, 'play_meta');
         const mX = textX + metaOff.x;
-        const mY = appRowY + 78 + metaOff.y;
+        const mY = appRowY + Math.round(78 * appScale) + metaOff.y;
         const metaFs = this.getFontPx(state, 'play_meta', 22);
         ctx.font = `500 ${metaFs}px ${FONT_SANS}`;
         ctx.textAlign = 'left';
@@ -1154,10 +1346,11 @@
           }
 
           const asOff = this.getOffset(state, 'nav_arrow_search');
+          const sArrowLen = Math.min(114, Math.max(52, h - 172));
           const a2TipX = searchIconCX + asOff.x;
           const a2TipY = searchIconCY + 32 + bob2 + asOff.y;
-          this.drawSleekPointerArrow(ctx, a2TipX + 2, a2TipY + 114, a2TipX, a2TipY);
-          this.registerHit('nav_arrow_search', '搜索指引箭头', 'element', a2TipX - 26, searchIconCY + 32 + asOff.y, 52, 120, 'module_2');
+          this.drawSleekPointerArrow(ctx, a2TipX + 2, a2TipY + sArrowLen, a2TipX, a2TipY);
+          this.registerHit('nav_arrow_search', '搜索指引箭头', 'element', a2TipX - 26, searchIconCY + 32 + asOff.y, 52, sArrowLen + 6, 'module_2');
         }
       }
 
@@ -1266,7 +1459,7 @@
       ctx.font = `600 ${cancelFs}px ${FONT_SANS}`;
       const cancelW = this.isVisible(state, 'user_cancel_btn') ? ctx.measureText(cancelStr).width : 0;
 
-      // 1) 搜索输入框
+      // 1) 搜索输入框（支持流金重点高亮框 + 扩散脉冲波纹 + 扫光流光带 + 动态指向箭头胶囊）
       const boxY = y + padY;
       const boxCY = boxY + searchBarH / 2;
       if (this.isVisible(state, 'user_search_box')) {
@@ -1275,6 +1468,29 @@
         const drawBoxY = boxY + sbOff.y;
         const drawCY = drawBoxY + searchBarH / 2;
         const boxW = w - padX * 2 - (cancelW ? cancelW + 24 : 0);
+        const isHighlight = um.highlightSearch !== false;
+        const t = this.animTime || 0;
+        const hiPulse = t > 0 ? 0.5 + 0.5 * Math.sin(t * 4.2) : 0.78;
+
+        // ① 外圈雷达扩散脉冲波纹
+        if (isHighlight && !isFullTrans) {
+          const rip = t > 0 ? (t * 0.85) % 1 : 0.24;
+          const expand = Math.round(rip * 9);
+          const ripAlpha = Math.max(0.12, (1 - rip) * 0.72);
+          ctx.save();
+          ctx.strokeStyle = `rgba(250, 204, 21, ${ripAlpha.toFixed(3)})`;
+          ctx.lineWidth = 2.2;
+          this.roundRect(
+            ctx,
+            boxX - expand,
+            drawBoxY - expand,
+            boxW + expand * 2,
+            searchBarH + expand * 2,
+            searchBarH / 2 + expand
+          );
+          ctx.stroke();
+          ctx.restore();
+        }
 
         ctx.save();
         this.roundRect(ctx, boxX, drawBoxY, boxW, searchBarH, searchBarH / 2);
@@ -1283,49 +1499,94 @@
         ctx.clip();
 
         const sbGlow = ctx.createRadialGradient(
-          boxX + boxW * 0.42,
-          drawBoxY + searchBarH + 8,
+          boxX + boxW * 0.28,
+          drawBoxY + searchBarH + 6,
           12,
-          boxX + boxW * 0.42,
+          boxX + boxW * 0.28,
           drawBoxY + searchBarH,
-          boxW * 0.55
+          boxW * 0.65
         );
-        sbGlow.addColorStop(0, 'rgba(217, 70, 239, 0.42)');
-        sbGlow.addColorStop(0.55, 'rgba(147, 51, 234, 0.16)');
+        sbGlow.addColorStop(0, isHighlight ? 'rgba(250, 204, 21, 0.28)' : 'rgba(217, 70, 239, 0.42)');
+        sbGlow.addColorStop(0.5, isHighlight ? 'rgba(244, 63, 94, 0.22)' : 'rgba(147, 51, 234, 0.16)');
         sbGlow.addColorStop(1, 'rgba(0, 0, 0, 0)');
         ctx.fillStyle = sbGlow;
         ctx.fillRect(boxX, drawBoxY, boxW, searchBarH);
+
+        // ② 内部斜向扫光流光带
+        if (isHighlight) {
+          const sweepProg = t > 0 ? (t * 0.52) % 1 : 0.26;
+          const sweepX = boxX - 90 + sweepProg * (boxW + 180);
+          const sweepGrad = ctx.createLinearGradient(sweepX - 70, drawBoxY, sweepX + 70, drawBoxY + searchBarH);
+          sweepGrad.addColorStop(0, 'rgba(254, 240, 138, 0)');
+          sweepGrad.addColorStop(0.5, 'rgba(254, 240, 138, 0.2)');
+          sweepGrad.addColorStop(1, 'rgba(254, 240, 138, 0)');
+          ctx.fillStyle = sweepGrad;
+          ctx.fillRect(boxX, drawBoxY, boxW, searchBarH);
+        }
         ctx.restore();
 
+        // 双色流金霓虹描边
         ctx.save();
         this.roundRect(ctx, boxX, drawBoxY, boxW, searchBarH, searchBarH / 2);
         const sbRim = ctx.createLinearGradient(boxX, drawBoxY, boxX + boxW, drawBoxY + searchBarH);
-        sbRim.addColorStop(0, 'rgba(192, 132, 252, 0.68)');
-        sbRim.addColorStop(0.55, 'rgba(234, 179, 8, 0.42)');
-        sbRim.addColorStop(1, 'rgba(217, 70, 239, 0.75)');
+        if (isHighlight) {
+          sbRim.addColorStop(0, '#fde047');
+          sbRim.addColorStop(0.5, '#f43f5e');
+          sbRim.addColorStop(1, '#facc15');
+          ctx.shadowColor = 'rgba(250, 204, 21, 0.72)';
+          ctx.shadowBlur = 10 + hiPulse * 12;
+          ctx.lineWidth = 3.2;
+        } else {
+          sbRim.addColorStop(0, 'rgba(192, 132, 252, 0.68)');
+          sbRim.addColorStop(0.55, 'rgba(234, 179, 8, 0.42)');
+          sbRim.addColorStop(1, 'rgba(217, 70, 239, 0.75)');
+          ctx.lineWidth = 2;
+        }
         ctx.strokeStyle = sbRim;
-        ctx.lineWidth = 2;
         ctx.stroke();
         ctx.restore();
 
-        this.drawMagnifier(ctx, boxX + 38, drawCY, 12, '#e2e8f0', 3.5);
+        const magR = isHighlight ? 12 + hiPulse * 1.5 : 12;
+        this.drawMagnifier(ctx, boxX + 38, drawCY, magR, isHighlight ? '#fde047' : '#e2e8f0', 3.6);
 
         const qStr = String(um.searchQuery || '');
         const searchFs = this.getFontPx(state, 'user_search_box', 30);
-        ctx.font = `700 ${searchFs}px ${FONT_SANS}`;
-        ctx.fillStyle = '#ffffff';
+        ctx.font = `${isHighlight ? 900 : 700} ${searchFs}px ${FONT_SANS}`;
+        const textStartX = boxX + 66;
+        const qw = ctx.measureText(qStr).width;
+
+        // ③ 搜索数字金底高亮块 + 底部强调线
+        if (isHighlight && qStr) {
+          ctx.save();
+          const padH = 10;
+          const qBoxH = Math.max(38, Math.round(searchFs * 1.42));
+          const qBoxY = drawCY - qBoxH / 2;
+          ctx.fillStyle = `rgba(250, 204, 21, ${(0.14 + hiPulse * 0.08).toFixed(3)})`;
+          this.roundRect(ctx, textStartX - padH, qBoxY, qw + padH * 2, qBoxH, 10);
+          ctx.fill();
+          ctx.fillStyle = '#fde047';
+          ctx.fillRect(textStartX - 4, qBoxY + qBoxH - 4, qw + 8, 2.8);
+          ctx.restore();
+        }
+
+        ctx.save();
+        if (isHighlight) {
+          ctx.shadowColor = 'rgba(250, 204, 21, 0.7)';
+          ctx.shadowBlur = 10;
+        }
+        ctx.fillStyle = isHighlight ? '#fef08a' : '#ffffff';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        const textStartX = boxX + 66;
         ctx.fillText(qStr, textStartX, drawCY + 1);
+        ctx.restore();
 
         if (um.showCursor) {
-          const t = this.animTime || 0;
           const cursorAlpha = t > 0 ? 0.25 + 0.75 * (0.5 + 0.5 * Math.sin(t * 5.6)) : 1;
-          const qw = ctx.measureText(qStr).width;
           const curH = Math.max(22, Math.round(searchFs * 1.12));
-          ctx.fillStyle = `rgba(96, 165, 250, ${cursorAlpha.toFixed(3)})`;
-          ctx.fillRect(textStartX + qw + 4, drawCY - curH / 2, 3.2, curH);
+          ctx.fillStyle = isHighlight
+            ? `rgba(250, 204, 21, ${cursorAlpha.toFixed(3)})`
+            : `rgba(96, 165, 250, ${cursorAlpha.toFixed(3)})`;
+          ctx.fillRect(textStartX + qw + (isHighlight ? 8 : 4), drawCY - curH / 2, 3.4, curH);
         }
 
         if (um.showClearBtn) {
@@ -1345,6 +1606,86 @@
           ctx.stroke();
         }
         this.registerHit('user_search_box', '搜索输入框', 'element', boxX, drawBoxY, boxW, searchBarH, 'module_3');
+
+        // ④ 紧贴搜索词右侧：左右弹跳金色指向箭头 + 醒目引导提示胶囊（可单独点击/拖动/隐藏）
+        const rightSpaceEnd = um.showClearBtn ? boxX + boxW - 58 : boxX + boxW - 18;
+        const anchorX = textStartX + qw + (isHighlight ? 22 : 16);
+        const availCalloutW = rightSpaceEnd - anchorX;
+        if (isHighlight && this.isVisible(state, 'user_search_callout') && availCalloutW > 56) {
+          const coOff = this.getOffset(state, 'user_search_callout');
+          const bobX = t > 0 ? Math.max(0, Math.sin(t * 5.0) * 8) : 0;
+          const coX = anchorX + bobX + coOff.x;
+          const coY = drawCY + coOff.y;
+
+          ctx.save();
+          ctx.shadowColor = 'rgba(250, 204, 21, 0.85)';
+          ctx.shadowBlur = 10;
+          ctx.strokeStyle = '#fde047';
+          ctx.fillStyle = '#fde047';
+          ctx.lineWidth = 3.2;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.beginPath();
+          ctx.moveTo(coX + 24, coY);
+          ctx.lineTo(coX + 2, coY);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(coX, coY);
+          ctx.lineTo(coX + 10, coY - 7);
+          ctx.lineTo(coX + 10, coY + 7);
+          ctx.closePath();
+          ctx.fill();
+          ctx.restore();
+
+          const coText = um.searchCallout !== undefined ? String(um.searchCallout).trim() : '认准此号搜索';
+          let coHitW = 36;
+          let coHitH = 34;
+          if (coText && availCalloutW > 112) {
+            const coFs = this.getFontPx(state, 'user_search_callout', 18);
+            ctx.save();
+            ctx.font = `800 ${coFs}px ${FONT_SANS}`;
+            const maxPillTW = Math.max(44, availCalloutW - 58);
+            const drawnCo = this.truncateText(ctx, coText, maxPillTW);
+            const coTW = ctx.measureText(drawnCo).width;
+            const pillW = coTW + 22;
+            const pillH = Math.max(28, Math.round(coFs * 1.62));
+            const pillX = coX + 28;
+            const pillY = coY - pillH / 2;
+
+            ctx.shadowColor = 'rgba(244, 63, 94, 0.45)';
+            ctx.shadowBlur = 10;
+            const coGrad = ctx.createLinearGradient(pillX, pillY, pillX + pillW, pillY + pillH);
+            coGrad.addColorStop(0, '#f59e0b');
+            coGrad.addColorStop(1, '#e11d48');
+            ctx.fillStyle = coGrad;
+            this.roundRect(ctx, pillX, pillY, pillW, pillH, pillH / 2);
+            ctx.fill();
+            ctx.strokeStyle = '#fef08a';
+            ctx.lineWidth = 1.4;
+            ctx.stroke();
+
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(drawnCo, pillX + pillW / 2, coY + 1);
+            ctx.restore();
+
+            coHitW = 28 + pillW + 4;
+            coHitH = Math.max(34, pillH + 4);
+          }
+
+          this.registerHit(
+            'user_search_callout',
+            '搜索重点提示标',
+            'element',
+            coX - 2,
+            coY - coHitH / 2,
+            coHitW,
+            coHitH,
+            'module_3'
+          );
+        }
       }
 
       if (this.isVisible(state, 'user_cancel_btn')) {
@@ -1696,10 +2037,14 @@
 
       const colW = (w - padX * 2 - gap) / 2;
       const footerH = Number(fm.footerHeight) || 92;
-      const mediaH = Math.max(360, availH - footerH - padY * 2);
+      const rows = Math.max(1, Math.ceil(visibleCards.length / 2));
+      let mediaH = Math.max(360, availH - footerH - padY * 2);
+      if (state && state.activeWorkspace === 'store-portrait' && rows > 1) {
+        const perRowCardH = Math.floor((availH - padY * 2 - (rows - 1) * gap) / rows);
+        mediaH = Math.max(180, perRowCardH - footerH);
+      }
       const cardH = mediaH + footerH;
 
-      const rows = Math.max(1, Math.ceil(visibleCards.length / 2));
       const totalH = padY * 2 + rows * cardH + (rows - 1) * gap;
 
       // 获取上方用户卡片同步过来的头像与昵称
@@ -2490,8 +2835,23 @@
         const key = `custom_el_${el.id}`;
         if (!this.isVisible(state, key)) return;
         const off = this.getOffset(state, key);
-        const cx = (Number(el.x) || 400) + off.x;
-        const cy = (Number(el.y) || 300) + off.y;
+        const isPortraitStore = state && state.activeWorkspace === 'store-portrait' && workspace === 'store';
+        const baseX = isPortraitStore
+          ? el.px !== undefined
+            ? Number(el.px)
+            : el.id === 'ce_default_install_arrow'
+            ? 814
+            : Math.round((Number(el.x) || 960) * (1080 / 1920))
+          : Number(el.x) || 400;
+        const baseY = isPortraitStore
+          ? el.py !== undefined
+            ? Number(el.py)
+            : el.id === 'ce_default_install_arrow'
+            ? 249
+            : Math.round((Number(el.y) || 540) * (1920 / 1080))
+          : Number(el.y) || 300;
+        const cx = baseX + off.x;
+        const cy = baseY + off.y;
         const sc = Math.max(0.25, Math.min(4, Number(el.scale) || 1));
         const rot = ((Number(el.rotation) || 0) * Math.PI) / 180;
         const bgStyle = el.bgStyle || (el.type === 'box' ? 'red' : el.type === 'badge' ? 'purple' : 'none');

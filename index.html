@@ -110,16 +110,21 @@
         </div>
       </div>
 
-      <!-- 双栏模式切换条（商店截图生成器 ⇄ 个人中心） -->
+      <!-- 多栏模式切换条（横版商店 ⇄ 竖版商店 9:16 ⇄ 个人中心） -->
       <div id="stageModeBar" class="stage-mode-bar">
         <div class="mode-tabs-group">
           <button type="button" class="mode-tab-btn active" data-workspace-mode="store">
-            🏪 商店截图生成器
+            🏪 商店截图（横版 16:9）
+          </button>
+          <button type="button" class="mode-tab-btn" data-workspace-mode="store-portrait">
+            📱 商店截图（竖版 9:16）
           </button>
           <button type="button" class="mode-tab-btn" data-workspace-mode="profile">
             👤 个人中心
           </button>
         </div>
+
+        <span id="storeSyncHintBadge" class="store-sync-hint">⇄ 横版与竖版内容/元素实时双向同步</span>
 
         <div id="profileBarTools" class="profile-bar-tools hidden">
           <select id="selProfileViewportMode" class="ctrl-select" style="width:auto;padding:4px 8px;font-size:12px;" data-bind="profileCenter.viewportMode">
@@ -568,7 +573,13 @@
             </div>
           </div>
 
+          <div class="field-group">
+            <label class="field-label"><span>🎯 搜索重点提示词（箭头右侧高亮胶囊）</span><button type="button" class="field-dice-btn" data-dice-target="userModule.searchCallout" data-dice-pool="searchCallout" title="随机提示词">🎲</button></label>
+            <input type="text" class="ctrl-input" data-bind="userModule.searchCallout" placeholder="认准此号搜索（留空则仅留箭头）" />
+          </div>
+
           <div class="switch-grid">
+            <label class="chk-pill"><input type="checkbox" data-bind="userModule.highlightSearch" /> 🔥 搜索框重点标记动效</label>
             <label class="chk-pill"><input type="checkbox" data-bind="userModule.showCursor" /> 显示输入光标</label>
             <label class="chk-pill"><input type="checkbox" data-bind="userModule.showClearBtn" /> 显示清除 ×</label>
           </div>

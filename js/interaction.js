@@ -184,7 +184,9 @@
         }
 
         const state = this.getState();
-        const curOff = (state.offsets && state.offsets[hit.key]) || { x: 0, y: 0 };
+        const offMap =
+          (state.activeWorkspace === 'store-portrait' ? state.portraitOffsets : state.offsets) || {};
+        const curOff = offMap[hit.key] || { x: 0, y: 0 };
 
         const otherBoxes = (this.renderer.hitBoxes || []).filter(
           (b) => b.key !== hit.key && (hit.kind === 'module' ? b.kind === 'module' : b.kind === 'element')
@@ -374,7 +376,9 @@
         const step = e.shiftKey ? 10 : 1;
         const key = sel.key;
         const state = this.getState();
-        const cur = (state.offsets && state.offsets[key]) || { x: 0, y: 0 };
+        const offMap =
+          (state.activeWorkspace === 'store-portrait' ? state.portraitOffsets : state.offsets) || {};
+        const cur = offMap[key] || { x: 0, y: 0 };
 
         if (e.key === 'ArrowLeft') {
           e.preventDefault();
