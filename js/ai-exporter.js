@@ -477,8 +477,288 @@
   }
 
   /**
-   * 导出当前画布高清 MP4 影片（支持原生 H.264 MediaRecorder + WebAudio 混音 + WebCodecs Mp4Muxer 兜底）
+   * 导出当前画布高清 MP4 影片（优先 WebCodecs + Mp4Muxer 标准前置 moov 封装，失败自动回退原生 MediaRecorder MP4/WebM）
    */
+  function computeSafeVideoDims(stageCanvas) {
+    const { w: srcW, h: srcH } = getStageDims(stageCanvas);
+    const maxEdge = 1920;
+    const largest = Math.max(srcW, srcH);
+    if (largest <= maxEdge) {
+      return { w: srcW, h: srcH, srcW, srcH, scaled: false };
+    }
+    const scale = maxEdge / largest;
+    return {
+      w: Math.max(2, Math.round((srcW * scale) / 2) * 2),
+      h: Math.max(2, Math.round((srcH * scale) / 2) * 2),
+      srcW,
+      srcH,
+      scaled: true
+    };
+  }
+
+  function createOpaqueExportCanvas(w, h) {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { alpha: false }) || canvas.getContext('2d');
+    return { canvas, ctx };
+  }
+
+  function drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, state) {
+    if (!exportCtx || !stageCanvas) return;
+    const isLight = state && state.layout && state.layout.canvasTheme === 'light';
+    exportCtx.fillStyle = isLight ? '#f5f6fa' : '#09070f';
+    exportCtx.fillRect(0, 0, w, h);
+    exportCtx.drawImage(stageCanvas, 0, 0, w, h);
+  }
+
+  function readU32BE(bytes, offset) {
+    return (
+      ((bytes[offset] << 24) >>> 0) +
+      (bytes[offset + 1] << 16) +
+      (bytes[offset + 2] << 8) +
+      bytes[offset + 3]
+    );
+  }
+
+  async function readBlobBytes(blob) {
+    if (typeof blob.arrayBuffer === 'function') {
+      return new Uint8Array(await blob.arrayBuffer());
+    }
+    if (typeof global.FileReader !== 'undefined') {
+      return new Promise((resolve, reject) => {
+        const reader = new global.FileReader();
+        reader.onload = () => resolve(new Uint8Array(reader.result || new ArrayBuffer(0)));
+        reader.onerror = () => reject(reader.error || new Error('读取视频字节失败'));
+        reader.readAsArrayBuffer(blob);
+      });
+    }
+    if (Array.isArray(blob.parts)) {
+      let total = 0;
+      const chunks = blob.parts.map((p) => {
+        if (p instanceof Uint8Array) return p;
+        if (p instanceof ArrayBuffer) return new Uint8Array(p);
+        if (ArrayBuffer.isView(p)) return new Uint8Array(p.buffer, p.byteOffset, p.byteLength);
+        return new TextEncoder().encode(String(p));
+      });
+      chunks.forEach((c) => {
+        total += c.length;
+      });
+      const out = new Uint8Array(total);
+      let pos = 0;
+      chunks.forEach((c) => {
+        out.set(c, pos);
+        pos += c.length;
+      });
+      return out;
+    }
+    return new Uint8Array(0);
+  }
+
+  async function validateVideoBlob(blob, ext) {
+    if (!blob || typeof blob.size !== 'number' || blob.size < 1024) {
+      return { valid: false, reason: '导出视频体积过小或为空' };
+    }
+    let bytes;
+    try {
+      bytes = await readBlobBytes(blob);
+    } catch (e) {
+      return { valid: false, reason: e.message || '读取导出文件失败' };
+    }
+    if (!bytes || bytes.length < 1024) {
+      return { valid: false, reason: '导出视频有效字节不足' };
+    }
+
+    if (ext === 'mp4') {
+      if (bytes.length < 24) {
+        return { valid: false, reason: 'MP4 文件头长度不足' };
+      }
+      const firstType = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
+      if (firstType !== 'ftyp') {
+        return { valid: false, reason: `MP4 缺少 ftyp 文件头（实际为 ${firstType}）` };
+      }
+      let offset = 0;
+      let hasMoov = false;
+      let hasMdat = false;
+      let mdatPayload = 0;
+      while (offset + 8 <= bytes.length) {
+        let boxSize = readU32BE(bytes, offset);
+        const boxType = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
+        let headerSize = 8;
+        if (boxSize === 1) {
+          if (offset + 16 > bytes.length) {
+            return { valid: false, reason: `MP4 扩展盒体长度损坏（${boxType}）` };
+          }
+          const hi = readU32BE(bytes, offset + 8);
+          const lo = readU32BE(bytes, offset + 12);
+          boxSize = hi * 4294967296 + lo;
+          headerSize = 16;
+        } else if (boxSize === 0) {
+          boxSize = bytes.length - offset;
+        }
+        if (boxSize < headerSize || offset + boxSize > bytes.length) {
+          return { valid: false, reason: `MP4 盒体结构异常或被截断（${boxType}）` };
+        }
+        if (boxType === 'moov') hasMoov = true;
+        if (boxType === 'mdat') {
+          hasMdat = true;
+          mdatPayload += boxSize - headerSize;
+        }
+        offset += boxSize;
+      }
+      if (offset !== bytes.length) {
+        return { valid: false, reason: 'MP4 尾部存在损坏残留字节' };
+      }
+      if (!hasMoov) {
+        return { valid: false, reason: 'MP4 缺少 moov 元数据索引' };
+      }
+      if (!hasMdat || mdatPayload <= 64) {
+        return { valid: false, reason: 'MP4 缺少有效视频帧数据（mdat 为空）' };
+      }
+      return { valid: true };
+    }
+
+    if (ext === 'webm') {
+      if (bytes[0] !== 0x1a || bytes[1] !== 0x45 || bytes[2] !== 0xdf || bytes[3] !== 0xa3) {
+        return { valid: false, reason: 'WebM 缺少合法 EBML 文件头' };
+      }
+      return { valid: true };
+    }
+
+    return { valid: true };
+  }
+
+  function pickMediaRecorderMime(hasAudio, preferWebm) {
+    if (typeof global.MediaRecorder === 'undefined' || typeof global.MediaRecorder.isTypeSupported !== 'function') {
+      return null;
+    }
+    const candidates = preferWebm
+      ? hasAudio
+        ? [
+            'video/webm;codecs=vp9,opus',
+            'video/webm;codecs=vp8,opus',
+            'video/webm;codecs=vp9',
+            'video/webm;codecs=vp8',
+            'video/webm'
+          ]
+        : ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+      : hasAudio
+      ? [
+          'video/mp4;codecs=avc1.4d002a,mp4a.40.2',
+          'video/mp4;codecs=avc1.64002a,mp4a.40.2',
+          'video/mp4;codecs=avc1.640028,mp4a.40.2',
+          'video/mp4;codecs=avc1,mp4a.40.2',
+          'video/mp4;codecs=h264,mp4a.40.2',
+          'video/mp4'
+        ]
+      : [
+          'video/mp4;codecs=avc1.4d002a',
+          'video/mp4;codecs=avc1.64002a',
+          'video/mp4;codecs=avc1.640028',
+          'video/mp4;codecs=avc1',
+          'video/mp4;codecs=h264',
+          'video/mp4'
+        ];
+    return candidates.find((t) => global.MediaRecorder.isTypeSupported(t)) || null;
+  }
+
+  async function pickWebCodecsVideoConfig(w, h, fps) {
+    if (typeof global.VideoEncoder === 'undefined' || typeof global.VideoEncoder.isConfigSupported !== 'function') {
+      return null;
+    }
+    const codecs = [
+      'avc1.4d002a',
+      'avc1.64002a',
+      'avc1.42002a',
+      'avc1.640033',
+      'avc1.4d0033',
+      'avc1.420033',
+      'avc1.640028',
+      'avc1.4d0028'
+    ];
+    const hwModes = ['no-preference', 'prefer-software'];
+    const bitrates = [8_000_000, 5_000_000];
+    for (const hw of hwModes) {
+      for (const codec of codecs) {
+        for (const bitrate of bitrates) {
+          const cfg = {
+            codec,
+            width: w,
+            height: h,
+            bitrate,
+            framerate: fps,
+            hardwareAcceleration: hw,
+            avc: { format: 'avc' }
+          };
+          try {
+            const res = await global.VideoEncoder.isConfigSupported(cfg);
+            if (res && res.supported) {
+              return res.config || cfg;
+            }
+          } catch (_) {}
+        }
+      }
+    }
+    return null;
+  }
+
+  async function prepareMixedAudioBuffer(activeVideos, durationSec) {
+    const audibleVideos = (activeVideos || []).filter((v) => v && !v.muted && (v.currentSrc || v.src));
+    if (
+      audibleVideos.length === 0 ||
+      typeof global.AudioEncoder === 'undefined' ||
+      typeof global.AudioEncoder.isConfigSupported !== 'function' ||
+      typeof global.AudioData === 'undefined'
+    ) {
+      return null;
+    }
+    const OfflineAC = global.OfflineAudioContext || global.webkitOfflineAudioContext;
+    if (!OfflineAC) return null;
+
+    const sampleRate = 48000;
+    const numberOfChannels = 2;
+    try {
+      const support = await global.AudioEncoder.isConfigSupported({
+        codec: 'mp4a.40.2',
+        sampleRate,
+        numberOfChannels,
+        bitrate: 128_000
+      });
+      if (!support || !support.supported) return null;
+    } catch (_) {
+      return null;
+    }
+
+    const totalFrames = Math.max(sampleRate, Math.ceil(durationSec * sampleRate));
+    const offline = new OfflineAC(numberOfChannels, totalFrames, sampleRate);
+    let attachedCount = 0;
+
+    for (const v of audibleVideos) {
+      try {
+        const srcUrl = v.currentSrc || v.src;
+        if (!srcUrl) continue;
+        const resp = await fetch(srcUrl);
+        if (!resp.ok) continue;
+        const rawBuf = await resp.arrayBuffer();
+        const decoded = await offline.decodeAudioData(rawBuf);
+        if (!decoded || decoded.duration <= 0) continue;
+        const srcNode = offline.createBufferSource();
+        srcNode.buffer = decoded;
+        srcNode.loop = true;
+        srcNode.connect(offline.destination);
+        srcNode.start(0);
+        attachedCount += 1;
+      } catch (_) {}
+    }
+
+    if (attachedCount === 0) return null;
+    try {
+      return await offline.startRendering();
+    } catch (_) {
+      return null;
+    }
+  }
+
   async function exportVideoMP4(options) {
     const {
       stageCanvas,
@@ -492,7 +772,8 @@
 
     const state = getState();
     renderer.render(state, false);
-    const { w, h } = getStageDims(stageCanvas);
+    const dims = computeSafeVideoDims(stageCanvas);
+    const { w, h } = dims;
     const filePrefix = getFilePrefix(state);
 
     const activeVideos = [];
@@ -532,66 +813,55 @@
       } catch (_) {}
     }
 
-    // 检测浏览器原生 MP4 MediaRecorder 支持度
-    const mp4MimeTypes = [
-      'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
-      'video/mp4;codecs=avc1.640028,mp4a.40.2',
-      'video/mp4;codecs=avc1',
-      'video/mp4;codecs=h264',
-      'video/mp4'
-    ];
-    const supportedMp4Mime =
-      typeof MediaRecorder !== 'undefined'
-        ? mp4MimeTypes.find((t) => MediaRecorder.isTypeSupported(t))
-        : null;
-
-    // 方案 A：原生 MediaRecorder 直出 MP4（含音轨合成）
-    if (supportedMp4Mime) {
-      return recordViaMediaRecorder({
-        stageCanvas,
-        renderer,
-        getState,
-        activeVideos,
-        durationSec,
-        mimeType: supportedMp4Mime,
-        ext: 'mp4',
-        w,
-        h,
-        filePrefix,
-        onProgress,
-        abortSignal
-      });
+    // 方案 A：优先使用 Mp4Muxer + WebCodecs VideoEncoder 编码标准前置 moov 的 H.264 MP4（竖屏/横屏通用不损坏）
+    if (global.Mp4Muxer && typeof global.VideoEncoder !== 'undefined' && typeof global.VideoFrame !== 'undefined') {
+      try {
+        return await recordViaWebCodecsMp4({
+          stageCanvas,
+          renderer,
+          getState,
+          activeVideos,
+          durationSec,
+          w,
+          h,
+          filePrefix,
+          onProgress,
+          abortSignal
+        });
+      } catch (errA) {
+        console.warn('[LayaExport] WebCodecs Mp4Muxer 失败，自动切换原生 MediaRecorder MP4:', errA);
+      }
     }
 
-    // 方案 B：若 MediaRecorder 不支持 MP4，使用 CDN 加载的 Mp4Muxer + WebCodecs VideoEncoder 编码标準 H.264 MP4
-    if (global.Mp4Muxer && typeof global.VideoEncoder !== 'undefined') {
-      return recordViaWebCodecsMp4({
-        stageCanvas,
-        renderer,
-        getState,
-        durationSec,
-        w,
-        h,
-        filePrefix,
-        onProgress,
-        abortSignal
-      });
+    // 方案 B：原生 MediaRecorder 直出 MP4（仅在确有音轨时声明 AAC，并严格校验容器结构）
+    if (typeof global.MediaRecorder !== 'undefined') {
+      try {
+        return await recordViaMediaRecorder({
+          stageCanvas,
+          renderer,
+          getState,
+          activeVideos,
+          durationSec,
+          preferWebm: false,
+          w,
+          h,
+          filePrefix,
+          onProgress,
+          abortSignal
+        });
+      } catch (errB) {
+        console.warn('[LayaExport] 原生 MediaRecorder MP4 校验未通过或受限，回退高兼容 WebM:', errB);
+      }
     }
 
-    // 方案 C：兜底高码率录制
-    const fallbackMime =
-      typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm';
-
+    // 方案 C：高兼容 WebM 兜底
     return recordViaMediaRecorder({
       stageCanvas,
       renderer,
       getState,
       activeVideos,
       durationSec,
-      mimeType: fallbackMime,
-      ext: fallbackMime.includes('mp4') ? 'mp4' : 'webm',
+      preferWebm: true,
       w,
       h,
       filePrefix,
@@ -607,8 +877,7 @@
       getState,
       activeVideos,
       durationSec,
-      mimeType,
-      ext,
+      preferWebm,
       w,
       h,
       filePrefix,
@@ -617,16 +886,27 @@
     } = cfg;
 
     return new Promise((resolve, reject) => {
-      const fps = 30;
-      const canvasStream = stageCanvas.captureStream(fps);
-      const combinedTracks = [...canvasStream.getVideoTracks()];
+      if (typeof global.MediaRecorder === 'undefined') {
+        reject(new Error('当前浏览器不支持 MediaRecorder 视频录制'));
+        return;
+      }
 
-      // 混入上传视频的音频轨道
+      const fps = 30;
+      const { canvas: exportCanvas, ctx: exportCtx } = createOpaqueExportCanvas(w, h);
+      renderer.render(getState(), false);
+      drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, getState());
+
+      const canvasStream = exportCanvas.captureStream(fps);
+      const combinedTracks = [...canvasStream.getVideoTracks()];
+      let hasAudio = false;
+
+      // 仅当存在真实未静音音频轨道时混入并向 MediaRecorder 声明音轨
       if (activeVideos.length > 0) {
         try {
           const audioCtx = ensureAudioContext();
           if (audioCtx) {
             const dest = audioCtx.createMediaStreamDestination();
+            let connected = 0;
             activeVideos.forEach((v) => {
               if (v.muted) return;
               let srcNode = videoAudioNodeMap.get(v);
@@ -637,27 +917,38 @@
               }
               try {
                 srcNode.connect(dest);
+                connected += 1;
               } catch (_) {}
             });
             const audioTracks = dest.stream.getAudioTracks();
-            if (audioTracks.length > 0) {
+            if (connected > 0 && audioTracks.length > 0) {
               combinedTracks.push(audioTracks[0]);
+              hasAudio = true;
             }
           }
         } catch (_) {
-          // 忽略部分无音轨视频的音频上下文错误
+          // 忽略无音轨视频的音频上下文异常
         }
       }
+
+      const mimeType = pickMediaRecorderMime(hasAudio, Boolean(preferWebm));
+      if (!mimeType) {
+        canvasStream.getTracks().forEach((t) => t.stop());
+        reject(new Error(preferWebm ? '当前浏览器不支持 WebM 录制' : '当前浏览器不支持原生 MP4 录制'));
+        return;
+      }
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
 
       const finalStream = new MediaStream(combinedTracks);
       const chunks = [];
       let recorder;
       try {
-        recorder = new MediaRecorder(finalStream, {
+        recorder = new global.MediaRecorder(finalStream, {
           mimeType,
-          videoBitsPerSecond: 12_000_000 // 12Mbps 确保 1080×1920 文字边缘锐利无色块
+          videoBitsPerSecond: 8_000_000
         });
       } catch (e) {
+        canvasStream.getTracks().forEach((t) => t.stop());
         reject(e);
         return;
       }
@@ -684,26 +975,40 @@
         abortSignal.onStopEarly = finishRecording;
       }
 
-      recorder.onstop = () => {
+      recorder.onstop = async () => {
         canvasStream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(chunks, { type: mimeType });
-        const stamp = formatTimestamp();
-        triggerDownload(blob, `${filePrefix}_${w}x${h}_${stamp}.${ext}`);
-        if (onProgress) onProgress(100);
-        resolve({ ext, durationSec });
+        try {
+          const blob = new Blob(chunks, { type: mimeType });
+          const check = await validateVideoBlob(blob, ext);
+          if (!check.valid) {
+            reject(new Error(check.reason || '录制生成的视频文件无效'));
+            return;
+          }
+          const stamp = formatTimestamp();
+          triggerDownload(blob, `${filePrefix}_${w}x${h}_${stamp}.${ext}`);
+          if (onProgress) onProgress(100);
+          resolve({ ext, durationSec, w, h, engine: `mediarecorder-${ext}` });
+        } catch (err) {
+          reject(err);
+        }
       };
 
       recorder.onerror = (err) => {
+        finished = true;
         cancelAnimationFrame(animId);
+        canvasStream.getTracks().forEach((t) => t.stop());
         reject(err.error || new Error('录制影片过程出错'));
       };
 
-      recorder.start(200);
+      // 不使用短间隔分片（如 start(200)），避免生成在本地播放器报损坏的碎裂 fMP4
+      recorder.start();
 
       const pumpFrame = () => {
         if (finished) return;
         const elapsed = performance.now() - startTime;
-        renderer.render(getState());
+        const curState = getState();
+        renderer.render(curState, false);
+        drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, curState);
         const pct = Math.min(99, Math.round((elapsed / totalMs) * 100));
         if (onProgress) onProgress(pct);
 
@@ -719,34 +1024,65 @@
   }
 
   async function recordViaWebCodecsMp4(cfg) {
-    const { stageCanvas, renderer, getState, durationSec, w, h, filePrefix, onProgress, abortSignal } = cfg;
+    const {
+      stageCanvas,
+      renderer,
+      getState,
+      activeVideos,
+      durationSec,
+      w,
+      h,
+      filePrefix,
+      onProgress,
+      abortSignal
+    } = cfg;
     const Mp4Muxer = global.Mp4Muxer;
     const fps = 30;
+    const frameDurationUs = Math.round(1_000_000 / fps);
     const totalFrames = Math.max(15, Math.round(durationSec * fps));
 
-    const muxer = new Mp4Muxer.Muxer({
+    const videoConfig = await pickWebCodecsVideoConfig(w, h, fps);
+    if (!videoConfig) {
+      throw new Error(`当前浏览器 WebCodecs 不支持 ${w}×${h} H.264 编码`);
+    }
+
+    const mixedAudio = await prepareMixedAudioBuffer(activeVideos, durationSec);
+    const hasAudio = Boolean(mixedAudio && mixedAudio.length > 0);
+
+    const muxerOpts = {
       target: new Mp4Muxer.ArrayBufferTarget(),
       video: {
         codec: 'avc',
         width: w,
         height: h
       },
-      fastStart: 'in-memory'
+      fastStart: 'in-memory',
+      firstTimestampBehavior: 'offset'
+    };
+    if (hasAudio) {
+      muxerOpts.audio = {
+        codec: 'aac',
+        numberOfChannels: 2,
+        sampleRate: 48000
+      };
+    }
+
+    const muxer = new Mp4Muxer.Muxer(muxerOpts);
+    const { canvas: exportCanvas, ctx: exportCtx } = createOpaqueExportCanvas(w, h);
+
+    let encoderError = null;
+    let encodedVideoChunks = 0;
+    const encoder = new global.VideoEncoder({
+      output: (chunk, meta) => {
+        encodedVideoChunks += 1;
+        muxer.addVideoChunk(chunk, meta);
+      },
+      error: (e) => {
+        encoderError = e instanceof Error ? e : new Error(String(e || 'VideoEncoder 编码失败'));
+      }
     });
 
-    const encoder = new VideoEncoder({
-      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-      error: (e) => console.error('VideoEncoder error:', e)
-    });
-
-    const codecStr = w * h > 1920 * 1080 ? 'avc1.640033' : 'avc1.640028';
-    encoder.configure({
-      codec: codecStr,
-      width: w,
-      height: h,
-      bitrate: 12_000_000,
-      framerate: fps
-    });
+    encoder.configure(videoConfig);
 
     let stoppedEarly = false;
     if (abortSignal) {
@@ -755,35 +1091,109 @@
       };
     }
 
-    const frameIntervalMs = 1000 / fps;
-    for (let i = 0; i < totalFrames; i++) {
-      if (stoppedEarly) break;
-      const frameStart = performance.now();
-      renderer.render(getState());
+    try {
+      const frameIntervalMs = 1000 / fps;
+      for (let i = 0; i < totalFrames; i++) {
+        if (i > 0 && stoppedEarly) break;
+        if (encoderError) throw encoderError;
 
-      const timestampUs = Math.round((i * 1_000_000) / fps);
-      const vf = new VideoFrame(stageCanvas, { timestamp: timestampUs });
-      encoder.encode(vf, { keyFrame: i % 30 === 0 });
-      vf.close();
+        while (encoder.encodeQueueSize > 8 && !encoderError) {
+          await new Promise((r) => setTimeout(r, 15));
+        }
+        if (encoderError) throw encoderError;
 
-      if (onProgress) {
-        onProgress(Math.min(98, Math.round(((i + 1) / totalFrames) * 100)));
+        const frameStart = performance.now();
+        const curState = getState();
+        renderer.render(curState, false);
+        drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, curState);
+
+        const timestampUs = i * frameDurationUs;
+        const vf = new global.VideoFrame(exportCanvas, {
+          timestamp: timestampUs,
+          duration: frameDurationUs
+        });
+        encoder.encode(vf, { keyFrame: i % (fps * 2) === 0 });
+        vf.close();
+
+        if (onProgress) {
+          onProgress(Math.min(94, Math.round(((i + 1) / totalFrames) * 94)));
+        }
+
+        const spent = performance.now() - frameStart;
+        const waitMs = Math.max(2, frameIntervalMs - spent);
+        await new Promise((r) => setTimeout(r, waitMs));
       }
 
-      const spent = performance.now() - frameStart;
-      const waitMs = Math.max(2, frameIntervalMs - spent);
-      await new Promise((r) => setTimeout(r, waitMs));
+      await encoder.flush();
+      if (encoderError) throw encoderError;
+      if (encodedVideoChunks === 0) {
+        throw new Error('VideoEncoder 未输出任何有效视频帧');
+      }
+    } finally {
+      try {
+        if (encoder.state !== 'closed') encoder.close();
+      } catch (_) {}
     }
 
-    await encoder.flush();
+    if (hasAudio) {
+      let audioError = null;
+      const audioEncoder = new global.AudioEncoder({
+        output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+        error: (e) => {
+          audioError = e instanceof Error ? e : new Error(String(e || 'AudioEncoder 编码失败'));
+        }
+      });
+      try {
+        audioEncoder.configure({
+          codec: 'mp4a.40.2',
+          numberOfChannels: 2,
+          sampleRate: 48000,
+          bitrate: 128_000
+        });
+        const sampleRate = 48000;
+        const ch0 = mixedAudio.getChannelData(0);
+        const ch1 = mixedAudio.numberOfChannels > 1 ? mixedAudio.getChannelData(1) : ch0;
+        const totalSamples = mixedAudio.length;
+        const chunkSamples = 1024;
+        for (let offset = 0; offset < totalSamples && !audioError; offset += chunkSamples) {
+          const frames = Math.min(chunkSamples, totalSamples - offset);
+          const planar = new Float32Array(frames * 2);
+          planar.set(ch0.subarray(offset, offset + frames), 0);
+          planar.set(ch1.subarray(offset, offset + frames), frames);
+          const audioData = new global.AudioData({
+            format: 'f32-planar',
+            sampleRate,
+            numberOfFrames: frames,
+            numberOfChannels: 2,
+            timestamp: Math.round((offset * 1_000_000) / sampleRate),
+            data: planar
+          });
+          audioEncoder.encode(audioData);
+          audioData.close();
+        }
+        await audioEncoder.flush();
+        if (audioError) throw audioError;
+      } finally {
+        try {
+          if (audioEncoder.state !== 'closed') audioEncoder.close();
+        } catch (_) {}
+      }
+    }
+
+    if (onProgress) onProgress(97);
     muxer.finalize();
 
-    const buffer = muxer.target.buffer;
+    const buffer = muxer.target && muxer.target.buffer;
     const blob = new Blob([buffer], { type: 'video/mp4' });
+    const check = await validateVideoBlob(blob, 'mp4');
+    if (!check.valid) {
+      throw new Error(check.reason || '生成的 MP4 容器校验失败');
+    }
+
     const stamp = formatTimestamp();
     triggerDownload(blob, `${filePrefix}_${w}x${h}_${stamp}.mp4`);
     if (onProgress) onProgress(100);
-    return { ext: 'mp4', durationSec };
+    return { ext: 'mp4', durationSec, w, h, engine: 'webcodecs-mp4' };
   }
 
   function formatTimestamp() {
@@ -810,6 +1220,9 @@
     generateLocalFallbackCopy,
     recognizeSingleMediaTitleWithAI,
     exportScreenshotPNG,
-    exportVideoMP4
+    exportVideoMP4,
+    computeSafeVideoDims,
+    pickMediaRecorderMime,
+    validateVideoBlob
   };
 })(window);

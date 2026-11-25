@@ -2990,15 +2990,27 @@
 
   async function handleExportMP4() {
     const modal = document.getElementById('exportProgressModal');
+    const modalTitle = document.getElementById('exportModalTitle');
     const barFill = document.getElementById('exportProgressBar');
     const pctText = document.getElementById('exportProgressText');
     const customSecInput = document.getElementById('inpExportDuration');
     const customSec = customSecInput ? Number(customSecInput.value) || 0 : 0;
 
     const stageCanvas = document.getElementById('stageCanvas');
-    const curW = (stageCanvas && stageCanvas.width) || 1920;
-    const curH = (stageCanvas && stageCanvas.height) || 1080;
+    renderer.ensureCanvasDimensions(state);
+    const dims =
+      global.LayaAIExporter && typeof global.LayaAIExporter.computeSafeVideoDims === 'function'
+        ? global.LayaAIExporter.computeSafeVideoDims(stageCanvas)
+        : {
+            w: (stageCanvas && stageCanvas.width) || 1920,
+            h: (stageCanvas && stageCanvas.height) || 1080
+          };
+    const curW = dims.w;
+    const curH = dims.h;
 
+    if (modalTitle) {
+      modalTitle.textContent = `🎬 正在合成 ${curW}×${curH} ${curH > curW ? '竖屏' : '横屏'}高清视频`;
+    }
     modal.classList.remove('hidden');
     barFill.style.width = '2%';
     pctText.textContent = `准备合成 ${curW}×${curH} 画面与音轨... 0%`;
@@ -3017,7 +3029,9 @@
           pctText.textContent = `正在渲染导出 ${curW}×${curH} 视频... ${pct}%`;
         }
       });
-      showToast(`🎬 导出完成（${result.ext.toUpperCase()} · 约 ${Math.round(result.durationSec)} 秒）`);
+      const outW = result.w || curW;
+      const outH = result.h || curH;
+      showToast(`🎬 导出完成（${String(result.ext || 'mp4').toUpperCase()} · ${outW}×${outH} · 约 ${Math.round(result.durationSec)} 秒）`);
     } catch (err) {
       showToast(`导出视频失败：${err.message}`, true);
     } finally {
