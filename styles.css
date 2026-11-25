@@ -1602,6 +1602,130 @@ input[type="range"] {
   transform-origin: top left;
 }
 
+.export-split-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.export-split-wrap > #btnExportMP4 {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.btn-export-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.22);
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.export-video-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 60;
+  width: 318px;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(18, 13, 34, 0.97);
+  border: 1px solid rgba(192, 132, 252, 0.45);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(14px);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.export-video-popover:not(.hidden) {
+  animation: popoverPopIn 0.22s var(--ease-spring) both;
+  transform-origin: top right;
+}
+
+.topbar .export-menu-item,
+.export-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+  white-space: normal;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(192, 132, 252, 0.22);
+  color: var(--text-main);
+}
+
+.export-menu-item:hover {
+  background: rgba(168, 85, 247, 0.16);
+  border-color: rgba(216, 180, 254, 0.55);
+}
+
+.export-menu-item.is-alpha {
+  border-color: rgba(56, 189, 248, 0.34);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.export-menu-item.is-alpha:hover {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(125, 211, 252, 0.65);
+}
+
+.export-menu-item.is-green {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.08);
+}
+
+.export-menu-item.is-green:hover {
+  background: rgba(34, 197, 94, 0.18);
+  border-color: rgba(74, 222, 128, 0.68);
+}
+
+.export-menu-title {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.export-menu-desc {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-muted);
+  white-space: normal;
+}
+
+.btn-alpha-outline {
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  color: #bae6fd;
+}
+
+.btn-alpha-outline:hover {
+  background: rgba(56, 189, 248, 0.24);
+  border-color: rgba(125, 211, 252, 0.72);
+}
+
+.btn-green-outline {
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.42);
+  color: #bbf7d0;
+}
+
+.btn-green-outline:hover {
+  background: rgba(34, 197, 94, 0.24);
+  border-color: rgba(74, 222, 128, 0.72);
+}
+
 @keyframes popoverPopIn {
   from {
     opacity: 0;

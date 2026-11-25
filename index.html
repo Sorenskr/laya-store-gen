@@ -39,7 +39,25 @@
       <button type="button" id="btnRandomStatusTop" class="btn-dark">🎲 随机状态栏</button>
       <button type="button" id="btnAiCopyTop" class="btn-purple-outline">✨ AI 生成文案</button>
       <button type="button" id="btnExportPNG" class="btn-purple-outline">📸 导出截图</button>
-      <button type="button" id="btnExportMP4" class="btn-primary">🎬 导出 MP4</button>
+      <div class="export-split-wrap">
+        <button type="button" id="btnExportMP4" class="btn-primary">🎬 导出 MP4</button>
+        <button type="button" id="btnExportVideoMenu" class="btn-primary btn-export-caret" title="选择普通 MP4 / 真透明 WebM / 绿幕抠像 MP4">▾</button>
+        <div id="exportVideoPopover" class="export-video-popover hidden">
+          <div class="quick-add-title">🎬 选择视频导出格式（横屏/竖屏自动适配）</div>
+          <button type="button" id="btnExportVideoStandard" class="export-menu-item" data-export-video-mode="mp4-standard">
+            <span class="export-menu-title">🎬 标准高清 MP4</span>
+            <span class="export-menu-desc">手机/电脑/微信通用，100% 标准播放（不带透明通道）</span>
+          </button>
+          <button type="button" id="btnExportVideoAlpha" class="export-menu-item is-alpha" data-export-video-mode="webm-alpha">
+            <span class="export-menu-title">🏁 真透明 WebM（VP9 + Alpha）</span>
+            <span class="export-menu-desc">真正保留透明背景与发光阴影，拖进剪映专业版/PR/AE/OBS 免抠直叠</span>
+          </button>
+          <button type="button" id="btnExportVideoGreen" class="export-menu-item is-green" data-export-video-mode="mp4-greenscreen">
+            <span class="export-menu-title">🟢 绿幕 MP4（#00FF00 标准绿底）</span>
+            <span class="export-menu-desc">标准 MP4 兼容全平台，剪映电脑/手机版点「色度抠图」1 秒去底</span>
+          </button>
+        </div>
+      </div>
       <button type="button" id="btnResetDefault" class="btn-dark">↺ 重置默认</button>
     </div>
   </header>
@@ -632,6 +650,18 @@
                 <label class="field-label">导出 MP4 秒数（0=自动）</label>
                 <input type="number" id="inpExportDuration" class="ctrl-input" value="0" min="0" max="60" />
               </div>
+            </div>
+
+            <div class="upload-bar-row" style="gap:6px;">
+              <button type="button" id="btnPanelExportAlpha" class="btn-alpha-outline" style="flex:1;" title="保留 Alpha 透明通道，拖进剪映专业版/PR/AE/OBS 免抠直叠">
+                🏁 导出透明 WebM
+              </button>
+              <button type="button" id="btnPanelExportGreen" class="btn-green-outline" style="flex:1;" title="自动填充 #00FF00 标准绿幕，全平台 MP4 配合色度抠图使用">
+                🟢 导出绿幕 MP4
+              </button>
+            </div>
+            <div style="font-size:10px;color:var(--text-muted);line-height:1.4;">
+              💡 H.264 标准 MP4 不支持透明通道；要叠加到其它视频上请选「🏁 透明 WebM（免抠直叠）」或「🟢 绿幕 MP4（剪映色度抠图）」。
             </div>
 
             <div class="upload-bar-row">

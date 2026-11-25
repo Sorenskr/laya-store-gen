@@ -453,11 +453,14 @@
   }
 
   /**
-   * 导出当前画布高清 PNG 截图（自适应 1920×1080 横屏或 1080×自适应 个人中心长图/竖屏）
+   * 导出当前画布高清 PNG 截图（自适应 1920×1080 横屏、1080×1920 竖屏或个人中心长图）
    */
   function exportScreenshotPNG(stageCanvas, renderer, state) {
     return new Promise((resolve, reject) => {
       try {
+        if (renderer && typeof renderer.ensureCanvasDimensions === 'function') {
+          renderer.ensureCanvasDimensions(state);
+        }
         renderer.render(state, true);
         const { w, h } = getStageDims(stageCanvas);
         const prefix = getFilePrefix(state);
@@ -468,7 +471,7 @@
           }
           const stamp = formatTimestamp();
           triggerDownload(blob, `${prefix}_${w}x${h}_${stamp}.png`);
-          resolve({ w, h });
+          resolve({ w, h, orientation: h > w ? 'portrait' : 'landscape' });
         }, 'image/png');
       } catch (err) {
         reject(err);
@@ -477,35 +480,82 @@
   }
 
   /**
-   * 导出当前画布高清 MP4 影片（优先 WebCodecs + Mp4Muxer 标准前置 moov 封装，失败自动回退原生 MediaRecorder MP4/WebM）
+   * 导出当前画布高清 MP4 影片（锁定横竖屏方向 + WebCodecs/Mp4Muxer 标准封装 + 容器/解码双层方向校验）
    */
-  function computeSafeVideoDims(stageCanvas) {
-    const { w: srcW, h: srcH } = getStageDims(stageCanvas);
+  function computeSafeVideoDims(stageCanvas, state) {
+    let { w: srcW, h: srcH } = getStageDims(stageCanvas);
+    if (state && state.activeWorkspace === 'store-portrait' && srcW > srcH) {
+      srcW = (global.LayaDefaults && global.LayaDefaults.PORTRAIT_STAGE_WIDTH) || 1080;
+      srcH = (global.LayaDefaults && global.LayaDefaults.PORTRAIT_STAGE_HEIGHT) || 1920;
+    } else if (state && state.activeWorkspace === 'store' && srcH > srcW) {
+      srcW = (global.LayaDefaults && global.LayaDefaults.STAGE_WIDTH) || 1920;
+      srcH = (global.LayaDefaults && global.LayaDefaults.STAGE_HEIGHT) || 1080;
+    } else if (state && state.activeWorkspace === 'profile' && srcW > srcH) {
+      const tmp = srcW;
+      srcW = srcH;
+      srcH = tmp;
+    }
     const maxEdge = 1920;
     const largest = Math.max(srcW, srcH);
     if (largest <= maxEdge) {
-      return { w: srcW, h: srcH, srcW, srcH, scaled: false };
+      return {
+        w: srcW,
+        h: srcH,
+        srcW,
+        srcH,
+        scaled: false,
+        orientation: srcH > srcW ? 'portrait' : 'landscape'
+      };
     }
     const scale = maxEdge / largest;
+    const outW = Math.max(2, Math.round((srcW * scale) / 2) * 2);
+    const outH = Math.max(2, Math.round((srcH * scale) / 2) * 2);
     return {
-      w: Math.max(2, Math.round((srcW * scale) / 2) * 2),
-      h: Math.max(2, Math.round((srcH * scale) / 2) * 2),
+      w: outW,
+      h: outH,
       srcW,
       srcH,
-      scaled: true
+      scaled: true,
+      orientation: outH > outW ? 'portrait' : 'landscape'
     };
   }
 
-  function createOpaqueExportCanvas(w, h) {
+  function buildExportState(rawState, videoMode) {
+    if (!rawState || (videoMode !== 'webm-alpha' && videoMode !== 'mp4-greenscreen')) {
+      return rawState;
+    }
+    const curTheme = rawState.layout && rawState.layout.canvasTheme;
+    if (curTheme === 'transparent' || curTheme === 'full-transparent') {
+      return rawState;
+    }
+    return Object.assign({}, rawState, {
+      layout: Object.assign({}, rawState.layout || {}, {
+        canvasTheme: 'transparent'
+      })
+    });
+  }
+
+  function createExportCanvas(w, h, keepAlpha) {
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
-    const ctx = canvas.getContext('2d', { alpha: false }) || canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: Boolean(keepAlpha) }) || canvas.getContext('2d');
     return { canvas, ctx };
   }
 
-  function drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, state) {
+  function drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, state, bgMode) {
     if (!exportCtx || !stageCanvas) return;
+    if (bgMode === 'alpha') {
+      exportCtx.clearRect(0, 0, w, h);
+      exportCtx.drawImage(stageCanvas, 0, 0, w, h);
+      return;
+    }
+    if (bgMode === 'greenscreen') {
+      exportCtx.fillStyle = '#00FF00';
+      exportCtx.fillRect(0, 0, w, h);
+      exportCtx.drawImage(stageCanvas, 0, 0, w, h);
+      return;
+    }
     const isLight = state && state.layout && state.layout.canvasTheme === 'light';
     exportCtx.fillStyle = isLight ? '#f5f6fa' : '#09070f';
     exportCtx.fillRect(0, 0, w, h);
@@ -519,6 +569,145 @@
       (bytes[offset + 2] << 8) +
       bytes[offset + 3]
     );
+  }
+
+  function readI32BE(bytes, offset) {
+    return (
+      (bytes[offset] << 24) |
+      (bytes[offset + 1] << 16) |
+      (bytes[offset + 2] << 8) |
+      bytes[offset + 3]
+    );
+  }
+
+  function readU16BE(bytes, offset) {
+    return (bytes[offset] << 8) | bytes[offset + 1];
+  }
+
+  function inspectMp4TrackDims(bytes) {
+    const out = {
+      hasVideoTrack: false,
+      tkhdW: 0,
+      tkhdH: 0,
+      avc1W: 0,
+      avc1H: 0,
+      effW: 0,
+      effH: 0,
+      rotated90: false
+    };
+    const containerTypes = new Set(['moov', 'trak', 'mdia', 'minf', 'stbl']);
+    function walk(start, end, trackCtx) {
+      let o = start;
+      while (o + 8 <= end) {
+        let sz = readU32BE(bytes, o);
+        const tp = String.fromCharCode(bytes[o + 4], bytes[o + 5], bytes[o + 6], bytes[o + 7]);
+        let hs = 8;
+        if (sz === 1) {
+          if (o + 16 > end) break;
+          sz = readU32BE(bytes, o + 8) * 4294967296 + readU32BE(bytes, o + 12);
+          hs = 16;
+        } else if (sz === 0) {
+          sz = end - o;
+        }
+        if (sz < hs || o + sz > end) break;
+        const boxEnd = o + sz;
+
+        if (tp === 'trak') {
+          const tInfo = { tkhdW: 0, tkhdH: 0, avc1W: 0, avc1H: 0, rotated90: false };
+          walk(o + hs, boxEnd, tInfo);
+          if (tInfo.tkhdW > 0 && tInfo.tkhdH > 0) {
+            out.hasVideoTrack = true;
+            out.tkhdW = tInfo.tkhdW;
+            out.tkhdH = tInfo.tkhdH;
+            out.avc1W = tInfo.avc1W || out.avc1W;
+            out.avc1H = tInfo.avc1H || out.avc1H;
+            out.rotated90 = tInfo.rotated90;
+            out.effW = tInfo.rotated90 ? tInfo.tkhdH : tInfo.tkhdW;
+            out.effH = tInfo.rotated90 ? tInfo.tkhdW : tInfo.tkhdH;
+          }
+        } else if (tp === 'tkhd' && trackCtx && o + hs + 84 <= boxEnd) {
+          const version = bytes[o + hs];
+          const matrixOff = o + hs + (version === 1 ? 52 : 40);
+          if (matrixOff + 44 <= boxEnd) {
+            const a = readI32BE(bytes, matrixOff);
+            const b = readI32BE(bytes, matrixOff + 4);
+            const c = readI32BE(bytes, matrixOff + 12);
+            const d = readI32BE(bytes, matrixOff + 16);
+            const wFixed = readU32BE(bytes, matrixOff + 36);
+            const hFixed = readU32BE(bytes, matrixOff + 40);
+            trackCtx.tkhdW = Math.round(wFixed / 65536);
+            trackCtx.tkhdH = Math.round(hFixed / 65536);
+            trackCtx.rotated90 = a === 0 && d === 0 && b !== 0 && c !== 0;
+          }
+        } else if (tp === 'avc1' && trackCtx && o + hs + 28 <= boxEnd) {
+          trackCtx.avc1W = readU16BE(bytes, o + hs + 24);
+          trackCtx.avc1H = readU16BE(bytes, o + hs + 26);
+        } else if (tp === 'stsd' && o + hs + 8 <= boxEnd) {
+          walk(o + hs + 8, boxEnd, trackCtx);
+        } else if (containerTypes.has(tp)) {
+          walk(o + hs, boxEnd, trackCtx);
+        }
+        o = boxEnd;
+      }
+    }
+    walk(0, bytes.length, null);
+    return out;
+  }
+
+  async function probeVideoElementDims(blob) {
+    if (
+      typeof global.HTMLVideoElement === 'undefined' ||
+      typeof global.document === 'undefined' ||
+      typeof global.document.createElement !== 'function' ||
+      typeof global.URL === 'undefined' ||
+      typeof global.URL.createObjectURL !== 'function'
+    ) {
+      return { checked: false };
+    }
+    let url = '';
+    try {
+      const vid = global.document.createElement('video');
+      if (!vid || typeof vid.load !== 'function') return { checked: false };
+      vid.muted = true;
+      vid.playsInline = true;
+      vid.preload = 'metadata';
+      url = global.URL.createObjectURL(blob);
+      return await new Promise((resolve) => {
+        let done = false;
+        const finish = (res) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          vid.onloadedmetadata = null;
+          vid.onerror = null;
+          try {
+            vid.removeAttribute('src');
+            vid.load();
+          } catch (_) {}
+          try {
+            global.URL.revokeObjectURL(url);
+          } catch (_) {}
+          resolve(res);
+        };
+        const timer = setTimeout(() => finish({ checked: false }), 1500);
+        vid.onloadedmetadata = () => {
+          if (vid.videoWidth > 0 && vid.videoHeight > 0) {
+            finish({ checked: true, width: vid.videoWidth, height: vid.videoHeight });
+          } else {
+            finish({ checked: false });
+          }
+        };
+        vid.onerror = () => finish({ checked: true, error: '浏览器无法解码导出的视频文件' });
+        vid.src = url;
+      });
+    } catch (_) {
+      if (url) {
+        try {
+          global.URL.revokeObjectURL(url);
+        } catch (__) {}
+      }
+      return { checked: false };
+    }
   }
 
   async function readBlobBytes(blob) {
@@ -555,7 +744,7 @@
     return new Uint8Array(0);
   }
 
-  async function validateVideoBlob(blob, ext) {
+  async function validateVideoBlob(blob, ext, expectedDims) {
     if (!blob || typeof blob.size !== 'number' || blob.size < 1024) {
       return { valid: false, reason: '导出视频体积过小或为空' };
     }
@@ -615,14 +804,63 @@
       if (!hasMdat || mdatPayload <= 64) {
         return { valid: false, reason: 'MP4 缺少有效视频帧数据（mdat 为空）' };
       }
-      return { valid: true };
-    }
 
-    if (ext === 'webm') {
+      if (expectedDims && expectedDims.w > 0 && expectedDims.h > 0) {
+        const trackInfo = inspectMp4TrackDims(bytes);
+        if (trackInfo.hasVideoTrack && trackInfo.effW > 0 && trackInfo.effH > 0) {
+          const wantPortrait = expectedDims.h > expectedDims.w;
+          const gotPortrait = trackInfo.effH > trackInfo.effW;
+          if (wantPortrait !== gotPortrait) {
+            return {
+              valid: false,
+              reason: `MP4 显示方向与当前模式相反（期望 ${expectedDims.w}×${expectedDims.h}，实际 ${trackInfo.effW}×${trackInfo.effH}）`
+            };
+          }
+          const wantRatio = expectedDims.w / expectedDims.h;
+          const gotRatio = trackInfo.effW / trackInfo.effH;
+          if (Math.abs(wantRatio - gotRatio) > 0.08) {
+            return {
+              valid: false,
+              reason: `MP4 宽高比例异常（期望 ${expectedDims.w}×${expectedDims.h}，实际 ${trackInfo.effW}×${trackInfo.effH}）`
+            };
+          }
+          if (!trackInfo.rotated90 && trackInfo.avc1W > 0 && trackInfo.avc1H > 0) {
+            if ((trackInfo.avc1H > trackInfo.avc1W) !== wantPortrait) {
+              return {
+                valid: false,
+                reason: `MP4 编码分辨率方向异常（期望 ${expectedDims.w}×${expectedDims.h}，avc1 为 ${trackInfo.avc1W}×${trackInfo.avc1H}）`
+              };
+            }
+          }
+        }
+      }
+    } else if (ext === 'webm') {
       if (bytes[0] !== 0x1a || bytes[1] !== 0x45 || bytes[2] !== 0xdf || bytes[3] !== 0xa3) {
         return { valid: false, reason: 'WebM 缺少合法 EBML 文件头' };
       }
-      return { valid: true };
+    }
+
+    const probe = await probeVideoElementDims(blob);
+    if (probe.error) {
+      return { valid: false, reason: probe.error };
+    }
+    if (probe.checked && expectedDims && expectedDims.w > 0 && expectedDims.h > 0) {
+      const wantPortrait = expectedDims.h > expectedDims.w;
+      const decodedPortrait = probe.height > probe.width;
+      if (wantPortrait !== decodedPortrait) {
+        return {
+          valid: false,
+          reason: `浏览器实测解码方向错误（期望 ${expectedDims.w}×${expectedDims.h}，实测解码 ${probe.width}×${probe.height}）`
+        };
+      }
+      const wantRatio = expectedDims.w / expectedDims.h;
+      const gotRatio = probe.width / probe.height;
+      if (Math.abs(wantRatio - gotRatio) > 0.08) {
+        return {
+          valid: false,
+          reason: `浏览器实测解码比例异常（期望 ${expectedDims.w}×${expectedDims.h}，实测解码 ${probe.width}×${probe.height}）`
+        };
+      }
     }
 
     return { valid: true };
@@ -662,7 +900,7 @@
     return candidates.find((t) => global.MediaRecorder.isTypeSupported(t)) || null;
   }
 
-  async function pickWebCodecsVideoConfig(w, h, fps) {
+  async function pickWebCodecsVideoConfig(w, h, fps, preferredHwMode) {
     if (typeof global.VideoEncoder === 'undefined' || typeof global.VideoEncoder.isConfigSupported !== 'function') {
       return null;
     }
@@ -676,7 +914,13 @@
       'avc1.640028',
       'avc1.4d0028'
     ];
-    const hwModes = ['no-preference', 'prefer-software'];
+    const isPortrait = h > w;
+    // 竖屏 1080×1920 在部分 Windows GPU 硬件编码器下会强行转横屏或拉伸，优先走软件 H.264 保证竖屏几何尺寸精确
+    const hwModes = preferredHwMode
+      ? [preferredHwMode]
+      : isPortrait
+      ? ['prefer-software', 'no-preference']
+      : ['no-preference', 'prefer-software'];
     const bitrates = [8_000_000, 5_000_000];
     for (const hw of hwModes) {
       for (const codec of codecs) {
@@ -685,6 +929,8 @@
             codec,
             width: w,
             height: h,
+            displayWidth: w,
+            displayHeight: h,
             bitrate,
             framerate: fps,
             hardwareAcceleration: hw,
@@ -693,7 +939,13 @@
           try {
             const res = await global.VideoEncoder.isConfigSupported(cfg);
             if (res && res.supported) {
-              return res.config || cfg;
+              const outCfg = Object.assign({}, res.config || cfg, {
+                width: w,
+                height: h,
+                displayWidth: w,
+                displayHeight: h
+              });
+              return outCfg;
             }
           } catch (_) {}
         }
@@ -766,19 +1018,29 @@
       getState,
       mediaRegistry,
       customDurationSec,
+      videoMode = 'mp4-standard',
       onProgress,
       abortSignal
     } = options;
 
-    const state = getState();
-    renderer.render(state, false);
-    const dims = computeSafeVideoDims(stageCanvas);
+    const rawState = getState();
+    const getExportState = () => buildExportState(getState(), videoMode);
+    const initialExportState = buildExportState(rawState, videoMode);
+    if (renderer && typeof renderer.ensureCanvasDimensions === 'function') {
+      renderer.ensureCanvasDimensions(rawState);
+    }
+    renderer.render(initialExportState, false);
+    const dims = computeSafeVideoDims(stageCanvas, rawState);
     const { w, h } = dims;
-    const filePrefix = getFilePrefix(state);
+    const filePrefix = getFilePrefix(rawState);
+    const isAlphaWebm = videoMode === 'webm-alpha';
+    const isGreenScreen = videoMode === 'mp4-greenscreen';
+    const bgMode = isAlphaWebm ? 'alpha' : isGreenScreen ? 'greenscreen' : 'opaque';
+    const fileTag = isAlphaWebm ? 'Alpha' : isGreenScreen ? 'GreenScreen' : '';
 
     const activeVideos = [];
-    if (state.activeWorkspace === 'profile') {
-      const posts = (state.profileCenter && state.profileCenter.posts) || [];
+    if (rawState.activeWorkspace === 'profile') {
+      const posts = (rawState.profileCenter && rawState.profileCenter.posts) || [];
       posts.forEach((p) => {
         const entry = mediaRegistry.profCardMedia && mediaRegistry.profCardMedia[p.id];
         if (entry && entry.type === 'video' && entry.el) {
@@ -786,7 +1048,7 @@
         }
       });
     } else {
-      (state.feedModule.cards || []).forEach((c) => {
+      (rawState.feedModule.cards || []).forEach((c) => {
         const entry = mediaRegistry.cardMedia[c.id];
         if (entry && entry.type === 'video' && entry.el) {
           activeVideos.push(entry.el);
@@ -813,61 +1075,104 @@
       } catch (_) {}
     }
 
-    // 方案 A：优先使用 Mp4Muxer + WebCodecs VideoEncoder 编码标准前置 moov 的 H.264 MP4（竖屏/横屏通用不损坏）
-    if (global.Mp4Muxer && typeof global.VideoEncoder !== 'undefined' && typeof global.VideoFrame !== 'undefined') {
-      try {
-        return await recordViaWebCodecsMp4({
-          stageCanvas,
-          renderer,
-          getState,
-          activeVideos,
-          durationSec,
-          w,
-          h,
-          filePrefix,
-          onProgress,
-          abortSignal
-        });
-      } catch (errA) {
-        console.warn('[LayaExport] WebCodecs Mp4Muxer 失败，自动切换原生 MediaRecorder MP4:', errA);
-      }
-    }
-
-    // 方案 B：原生 MediaRecorder 直出 MP4（仅在确有音轨时声明 AAC，并严格校验容器结构）
-    if (typeof global.MediaRecorder !== 'undefined') {
-      try {
+    try {
+      // 方案一：真透明 WebM（VP9 + Alpha 通道，免抠直叠）
+      if (isAlphaWebm) {
         return await recordViaMediaRecorder({
           stageCanvas,
           renderer,
-          getState,
+          getState: getExportState,
           activeVideos,
           durationSec,
-          preferWebm: false,
+          preferWebm: true,
+          keepAlpha: true,
+          bgMode: 'alpha',
+          fileTag: 'Alpha',
+          videoMode,
           w,
           h,
           filePrefix,
           onProgress,
           abortSignal
         });
-      } catch (errB) {
-        console.warn('[LayaExport] 原生 MediaRecorder MP4 校验未通过或受限，回退高兼容 WebM:', errB);
       }
-    }
 
-    // 方案 C：高兼容 WebM 兜底
-    return recordViaMediaRecorder({
-      stageCanvas,
-      renderer,
-      getState,
-      activeVideos,
-      durationSec,
-      preferWebm: true,
-      w,
-      h,
-      filePrefix,
-      onProgress,
-      abortSignal
-    });
+      // 方案 A：优先使用 Mp4Muxer + WebCodecs VideoEncoder（竖屏优先软件 H.264、横屏优先硬件，支持标准与绿幕 MP4）
+      if (global.Mp4Muxer && typeof global.VideoEncoder !== 'undefined' && typeof global.VideoFrame !== 'undefined') {
+        const hwCandidates = h > w ? ['prefer-software', 'no-preference'] : ['no-preference', 'prefer-software'];
+        for (const hwMode of hwCandidates) {
+          try {
+            return await recordViaWebCodecsMp4({
+              stageCanvas,
+              renderer,
+              getState: getExportState,
+              activeVideos,
+              durationSec,
+              w,
+              h,
+              hwMode,
+              bgMode,
+              fileTag,
+              videoMode,
+              filePrefix,
+              onProgress,
+              abortSignal
+            });
+          } catch (errA) {
+            console.warn(`[LayaExport] WebCodecs Mp4Muxer (${hwMode}) 失败或方向校验不通过:`, errA);
+          }
+        }
+      }
+
+      // 方案 B：原生 MediaRecorder 直出 MP4（仅在确有音轨时声明 AAC，并严格校验容器结构）
+      if (typeof global.MediaRecorder !== 'undefined') {
+        try {
+          return await recordViaMediaRecorder({
+            stageCanvas,
+            renderer,
+            getState: getExportState,
+            activeVideos,
+            durationSec,
+            preferWebm: false,
+            keepAlpha: false,
+            bgMode,
+            fileTag,
+            videoMode,
+            w,
+            h,
+            filePrefix,
+            onProgress,
+            abortSignal
+          });
+        } catch (errB) {
+          console.warn('[LayaExport] 原生 MediaRecorder MP4 校验未通过或受限，回退高兼容 WebM:', errB);
+        }
+      }
+
+      // 方案 C：高兼容 WebM 兜底
+      return await recordViaMediaRecorder({
+        stageCanvas,
+        renderer,
+        getState: getExportState,
+        activeVideos,
+        durationSec,
+        preferWebm: true,
+        keepAlpha: false,
+        bgMode,
+        fileTag,
+        videoMode,
+        w,
+        h,
+        filePrefix,
+        onProgress,
+        abortSignal
+      });
+    } finally {
+      // 导出完成后立即按原始画布状态重绘一次，确保临时透明导出不影响实时预览
+      try {
+        renderer.render(getState(), false);
+      } catch (_) {}
+    }
   }
 
   function recordViaMediaRecorder(cfg) {
@@ -878,6 +1183,10 @@
       activeVideos,
       durationSec,
       preferWebm,
+      keepAlpha,
+      bgMode,
+      fileTag,
+      videoMode,
       w,
       h,
       filePrefix,
@@ -892,9 +1201,9 @@
       }
 
       const fps = 30;
-      const { canvas: exportCanvas, ctx: exportCtx } = createOpaqueExportCanvas(w, h);
+      const { canvas: exportCanvas, ctx: exportCtx } = createExportCanvas(w, h, Boolean(keepAlpha));
       renderer.render(getState(), false);
-      drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, getState());
+      drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, getState(), bgMode || 'opaque');
 
       const canvasStream = exportCanvas.captureStream(fps);
       const combinedTracks = [...canvasStream.getVideoTracks()];
@@ -938,6 +1247,7 @@
         return;
       }
       const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const tagPart = fileTag ? `_${fileTag}` : '';
 
       const finalStream = new MediaStream(combinedTracks);
       const chunks = [];
@@ -979,15 +1289,23 @@
         canvasStream.getTracks().forEach((t) => t.stop());
         try {
           const blob = new Blob(chunks, { type: mimeType });
-          const check = await validateVideoBlob(blob, ext);
+          const check = await validateVideoBlob(blob, ext, { w, h });
           if (!check.valid) {
             reject(new Error(check.reason || '录制生成的视频文件无效'));
             return;
           }
           const stamp = formatTimestamp();
-          triggerDownload(blob, `${filePrefix}_${w}x${h}_${stamp}.${ext}`);
+          triggerDownload(blob, `${filePrefix}${tagPart}_${w}x${h}_${stamp}.${ext}`);
           if (onProgress) onProgress(100);
-          resolve({ ext, durationSec, w, h, engine: `mediarecorder-${ext}` });
+          resolve({
+            ext,
+            durationSec,
+            w,
+            h,
+            orientation: h > w ? 'portrait' : 'landscape',
+            videoMode: videoMode || 'mp4-standard',
+            engine: `mediarecorder-${ext}`
+          });
         } catch (err) {
           reject(err);
         }
@@ -1007,8 +1325,11 @@
         if (finished) return;
         const elapsed = performance.now() - startTime;
         const curState = getState();
+        if (renderer && typeof renderer.ensureCanvasDimensions === 'function') {
+          renderer.ensureCanvasDimensions(curState);
+        }
         renderer.render(curState, false);
-        drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, curState);
+        drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, curState, bgMode || 'opaque');
         const pct = Math.min(99, Math.round((elapsed / totalMs) * 100));
         if (onProgress) onProgress(pct);
 
@@ -1032,6 +1353,10 @@
       durationSec,
       w,
       h,
+      hwMode,
+      bgMode,
+      fileTag,
+      videoMode,
       filePrefix,
       onProgress,
       abortSignal
@@ -1041,9 +1366,9 @@
     const frameDurationUs = Math.round(1_000_000 / fps);
     const totalFrames = Math.max(15, Math.round(durationSec * fps));
 
-    const videoConfig = await pickWebCodecsVideoConfig(w, h, fps);
+    const videoConfig = await pickWebCodecsVideoConfig(w, h, fps, hwMode);
     if (!videoConfig) {
-      throw new Error(`当前浏览器 WebCodecs 不支持 ${w}×${h} H.264 编码`);
+      throw new Error(`当前浏览器 WebCodecs 不支持 ${w}×${h} (${hwMode || 'auto'}) H.264 编码`);
     }
 
     const mixedAudio = await prepareMixedAudioBuffer(activeVideos, durationSec);
@@ -1054,7 +1379,9 @@
       video: {
         codec: 'avc',
         width: w,
-        height: h
+        height: h,
+        rotation: 0,
+        frameRate: fps
       },
       fastStart: 'in-memory',
       firstTimestampBehavior: 'offset'
@@ -1068,12 +1395,20 @@
     }
 
     const muxer = new Mp4Muxer.Muxer(muxerOpts);
-    const { canvas: exportCanvas, ctx: exportCtx } = createOpaqueExportCanvas(w, h);
+    const { canvas: exportCanvas, ctx: exportCtx } = createExportCanvas(w, h, false);
 
     let encoderError = null;
     let encodedVideoChunks = 0;
+    const wantPortrait = h > w;
     const encoder = new global.VideoEncoder({
       output: (chunk, meta) => {
+        const dc = meta && meta.decoderConfig;
+        if (dc && dc.codedWidth > 0 && dc.codedHeight > 0 && (dc.codedHeight > dc.codedWidth) !== wantPortrait) {
+          encoderError = new Error(
+            `编码器输出方向与当前画布相反（预期 ${w}×${h}，输出 ${dc.codedWidth}×${dc.codedHeight}）`
+          );
+          return;
+        }
         encodedVideoChunks += 1;
         muxer.addVideoChunk(chunk, meta);
       },
@@ -1104,14 +1439,28 @@
 
         const frameStart = performance.now();
         const curState = getState();
+        if (renderer && typeof renderer.ensureCanvasDimensions === 'function') {
+          renderer.ensureCanvasDimensions(curState);
+        }
         renderer.render(curState, false);
-        drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, curState);
+        drawFrameToExportCanvas(exportCtx, stageCanvas, w, h, curState, bgMode || 'opaque');
 
         const timestampUs = i * frameDurationUs;
-        const vf = new global.VideoFrame(exportCanvas, {
-          timestamp: timestampUs,
-          duration: frameDurationUs
-        });
+        let vf;
+        try {
+          vf = new global.VideoFrame(exportCanvas, {
+            timestamp: timestampUs,
+            duration: frameDurationUs,
+            visibleRect: { x: 0, y: 0, width: w, height: h },
+            displayWidth: w,
+            displayHeight: h
+          });
+        } catch (_) {
+          vf = new global.VideoFrame(exportCanvas, {
+            timestamp: timestampUs,
+            duration: frameDurationUs
+          });
+        }
         encoder.encode(vf, { keyFrame: i % (fps * 2) === 0 });
         vf.close();
 
@@ -1185,15 +1534,24 @@
 
     const buffer = muxer.target && muxer.target.buffer;
     const blob = new Blob([buffer], { type: 'video/mp4' });
-    const check = await validateVideoBlob(blob, 'mp4');
+    const check = await validateVideoBlob(blob, 'mp4', { w, h });
     if (!check.valid) {
       throw new Error(check.reason || '生成的 MP4 容器校验失败');
     }
 
     const stamp = formatTimestamp();
-    triggerDownload(blob, `${filePrefix}_${w}x${h}_${stamp}.mp4`);
+    const tagPart = fileTag ? `_${fileTag}` : '';
+    triggerDownload(blob, `${filePrefix}${tagPart}_${w}x${h}_${stamp}.mp4`);
     if (onProgress) onProgress(100);
-    return { ext: 'mp4', durationSec, w, h, engine: 'webcodecs-mp4' };
+    return {
+      ext: 'mp4',
+      durationSec,
+      w,
+      h,
+      orientation: wantPortrait ? 'portrait' : 'landscape',
+      videoMode: videoMode || 'mp4-standard',
+      engine: 'webcodecs-mp4'
+    };
   }
 
   function formatTimestamp() {
@@ -1221,8 +1579,11 @@
     recognizeSingleMediaTitleWithAI,
     exportScreenshotPNG,
     exportVideoMP4,
+    buildExportState,
     computeSafeVideoDims,
     pickMediaRecorderMime,
+    pickWebCodecsVideoConfig,
+    inspectMp4TrackDims,
     validateVideoBlob
   };
 })(window);

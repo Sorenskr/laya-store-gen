@@ -737,7 +737,10 @@
         const info = await global.LayaAIExporter.exportScreenshotPNG(stageCanvas, renderer, state);
         const isTrans =
           state.layout.canvasTheme === 'transparent' || state.layout.canvasTheme === 'full-transparent';
-        const dimsStr = `${(info && info.w) || stageCanvas.width}×${(info && info.h) || stageCanvas.height}`;
+        const outW = (info && info.w) || stageCanvas.width;
+        const outH = (info && info.h) || stageCanvas.height;
+        const orientStr = outH > outW ? '竖屏' : '横屏';
+        const dimsStr = `${orientStr} ${outW}×${outH}`;
         showToast(
           isTrans
             ? `✅ 已导出 ${dimsStr} 真透明背景 PNG（可直接拖入剪映/PS叠加）`
@@ -748,7 +751,42 @@
       }
     });
 
-    document.getElementById('btnExportMP4').addEventListener('click', handleExportMP4);
+    document.getElementById('btnExportMP4').addEventListener('click', () => handleExportMP4('mp4-standard'));
+
+    const exportVideoMenuBtn = document.getElementById('btnExportVideoMenu');
+    const exportVideoPop = document.getElementById('exportVideoPopover');
+    if (exportVideoMenuBtn && exportVideoPop) {
+      exportVideoMenuBtn.addEventListener('click', (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        exportVideoPop.classList.toggle('hidden');
+      });
+      document.addEventListener('click', (e) => {
+        if (
+          !exportVideoPop.classList.contains('hidden') &&
+          !exportVideoPop.contains(e.target) &&
+          e.target !== exportVideoMenuBtn
+        ) {
+          exportVideoPop.classList.add('hidden');
+        }
+      });
+    }
+
+    document.querySelectorAll('[data-export-video-mode]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (exportVideoPop) exportVideoPop.classList.add('hidden');
+        const mode = btn.getAttribute('data-export-video-mode') || 'mp4-standard';
+        handleExportMP4(mode);
+      });
+    });
+
+    const panelAlphaBtn = document.getElementById('btnPanelExportAlpha');
+    if (panelAlphaBtn) {
+      panelAlphaBtn.addEventListener('click', () => handleExportMP4('webm-alpha'));
+    }
+    const panelGreenBtn = document.getElementById('btnPanelExportGreen');
+    if (panelGreenBtn) {
+      panelGreenBtn.addEventListener('click', () => handleExportMP4('mp4-greenscreen'));
+    }
 
     document.getElementById('btnStopExportEarly').addEventListener('click', () => {
       if (currentExportAbort && typeof currentExportAbort.onStopEarly === 'function') {
@@ -2988,7 +3026,9 @@
     }
   }
 
-  async function handleExportMP4() {
+  async function handleExportMP4(videoMode) {
+    const resolvedMode =
+      videoMode === 'webm-alpha' || videoMode === 'mp4-greenscreen' ? videoMode : 'mp4-standard';
     const modal = document.getElementById('exportProgressModal');
     const modalTitle = document.getElementById('exportModalTitle');
     const barFill = document.getElementById('exportProgressBar');
@@ -3000,16 +3040,23 @@
     renderer.ensureCanvasDimensions(state);
     const dims =
       global.LayaAIExporter && typeof global.LayaAIExporter.computeSafeVideoDims === 'function'
-        ? global.LayaAIExporter.computeSafeVideoDims(stageCanvas)
+        ? global.LayaAIExporter.computeSafeVideoDims(stageCanvas, state)
         : {
             w: (stageCanvas && stageCanvas.width) || 1920,
             h: (stageCanvas && stageCanvas.height) || 1080
           };
     const curW = dims.w;
     const curH = dims.h;
+    const orientWord = curH > curW ? '竖屏' : '横屏';
+    const modeTag =
+      resolvedMode === 'webm-alpha'
+        ? '真透明 WebM'
+        : resolvedMode === 'mp4-greenscreen'
+        ? '绿幕抠像 MP4'
+        : '高清视频';
 
     if (modalTitle) {
-      modalTitle.textContent = `🎬 正在合成 ${curW}×${curH} ${curH > curW ? '竖屏' : '横屏'}高清视频`;
+      modalTitle.textContent = `🎬 正在合成 ${curW}×${curH} ${orientWord}${modeTag}`;
     }
     modal.classList.remove('hidden');
     barFill.style.width = '2%';
@@ -3023,15 +3070,27 @@
         getState: () => state,
         mediaRegistry,
         customDurationSec: customSec,
+        videoMode: resolvedMode,
         abortSignal: currentExportAbort,
         onProgress: (pct) => {
           barFill.style.width = `${pct}%`;
-          pctText.textContent = `正在渲染导出 ${curW}×${curH} 视频... ${pct}%`;
+          pctText.textContent = `正在渲染导出 ${curW}×${curH} ${modeTag}... ${pct}%`;
         }
       });
       const outW = result.w || curW;
       const outH = result.h || curH;
-      showToast(`🎬 导出完成（${String(result.ext || 'mp4').toUpperCase()} · ${outW}×${outH} · 约 ${Math.round(result.durationSec)} 秒）`);
+      const orientLabel = outH > outW ? '竖屏' : '横屏';
+      const tipSuffix =
+        resolvedMode === 'webm-alpha'
+          ? ' · 保留真透明通道，可免抠直叠'
+          : resolvedMode === 'mp4-greenscreen'
+          ? ' · 绿幕底，剪映色度抠图去底'
+          : '';
+      showToast(
+        `🎬 导出完成（${orientLabel} ${String(result.ext || 'mp4').toUpperCase()} · ${outW}×${outH} · 约 ${Math.round(
+          result.durationSec
+        )} 秒${tipSuffix}）`
+      );
     } catch (err) {
       showToast(`导出视频失败：${err.message}`, true);
     } finally {
